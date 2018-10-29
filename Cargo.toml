@@ -1,0 +1,18 @@
+[package]
+name = "jamdraw"
+version = "0.1.0"
+authors = ["Claire Harris <wishing.engine@gmail.com>"]
+
+[dependencies]
+image = "~0.20.0"
+texture_packer = "~0.15.0"
+winit = "~0.17.2"
+
+[dependencies.gfx-hal]
+git = "https://github.com/gfx-rs/gfx"
+
+[dependencies.gfx-backend-metal]
+git = "https://github.com/gfx-rs/gfx"
+
+[build-dependencies]
+glsl-to-spirv = "~0.1.6"
