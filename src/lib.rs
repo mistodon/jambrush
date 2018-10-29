@@ -30,7 +30,7 @@ pub struct Sprite {
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 // TODO: Dynamically loading/packing sprites
-pub struct JamDrawSystem {
+pub struct JamBrushSystem {
     instance: backend::Instance,
     surface: backend::Surface,
     adapter: gfx_hal::Adapter<backend::Backend>,
@@ -75,9 +75,9 @@ pub struct JamDrawSystem {
     _private: (),
 }
 
-impl JamDrawSystem {
+impl JamBrushSystem {
     pub fn new(window: &Window, resolution: (u32, u32)) -> Self {
-        let instance = backend::Instance::create("Jamdraw", 1);
+        let instance = backend::Instance::create("JamBrush", 1);
         let mut surface = instance.create_surface(&window);
         let mut adapter = instance.enumerate_adapters().remove(0);
         let (device, mut queue_group) = adapter
@@ -336,7 +336,7 @@ impl JamDrawSystem {
 
         let swapchain = None;
 
-        JamDrawSystem {
+        JamBrushSystem {
             instance,
             surface,
             adapter,
@@ -381,7 +381,7 @@ impl JamDrawSystem {
             self.destroy_swapchain();
         }
 
-        let JamDrawSystem {
+        let JamBrushSystem {
             device,
             command_pool,
             render_pass,
@@ -432,8 +432,8 @@ impl JamDrawSystem {
         &mut self,
         canvas_clear_color: [f32; 4],
         border_clear_color: Option<[f32; 4]>,
-    ) -> JamDrawRenderer {
-        JamDrawRenderer::new(
+    ) -> JamBrushRenderer {
+        JamBrushRenderer::new(
             self,
             canvas_clear_color,
             border_clear_color.unwrap_or(canvas_clear_color),
@@ -586,8 +586,8 @@ impl JamDrawSystem {
     }
 }
 
-pub struct JamDrawRenderer<'a> {
-    draw_system: &'a mut JamDrawSystem,
+pub struct JamBrushRenderer<'a> {
+    draw_system: &'a mut JamBrushSystem,
     canvas_clear_color: [f32; 4],
     frame_index: SwapImageIndex,
     blit_command_buffer: Option<Submit<backend::Backend, Graphics, OneShot, Primary>>,
@@ -595,9 +595,9 @@ pub struct JamDrawRenderer<'a> {
     finished: bool,
 }
 
-impl<'a> JamDrawRenderer<'a> {
+impl<'a> JamBrushRenderer<'a> {
     fn new(
-        draw_system: &'a mut JamDrawSystem,
+        draw_system: &'a mut JamBrushSystem,
         canvas_clear_color: [f32; 4],
         border_clear_color: [f32; 4],
     ) -> Self {
@@ -694,7 +694,7 @@ impl<'a> JamDrawRenderer<'a> {
             };
         }
 
-        JamDrawRenderer {
+        JamBrushRenderer {
             draw_system,
             canvas_clear_color,
             frame_index,
@@ -816,10 +816,10 @@ impl<'a> JamDrawRenderer<'a> {
     }
 }
 
-impl<'a> Drop for JamDrawRenderer<'a> {
+impl<'a> Drop for JamBrushRenderer<'a> {
     fn drop(&mut self) {
         if !self.finished {
-            panic!("JamDrawRenderer dropped without calling `finish()`");
+            panic!("JamBrushRenderer dropped without calling `finish()`");
         }
     }
 }
