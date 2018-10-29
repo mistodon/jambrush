@@ -72,3 +72,11 @@ Examples
 - [ ] Pixel-perfect sprites
 - [ ] Free-aspect with non pixel-perfect sprites and linear blending
 - [ ] Kitchen sink example with sprites, primitives, stencil, etc.
+
+## Layered API examples
+
+- [ ] Custom instance/adapter setup
+- [ ] Custom swapchain management
+- [ ] Custom pipeline/shaders
+- [ ] Custom rendering
+- [ ] Mix of managed and custom
