@@ -29,15 +29,8 @@ fn main() {
     };
 
     let star_sprite = {
-        let image_bytes = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/examples/star.png"
-        )).unwrap();
-
-        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
-        let (w, h) = image.dimensions();
-
-        jambrush.load_sprite([w, h], &image)
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/star.png");
+        jambrush.load_sprite_file(path)
     };
 
     loop {

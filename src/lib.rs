@@ -6,6 +6,8 @@ extern crate winit;
 
 mod gfxutils;
 
+use std::path::Path;
+
 use image::{DynamicImage, Rgba, RgbaImage};
 use texture_packer::TexturePacker;
 use winit::Window;
@@ -447,6 +449,14 @@ impl JamBrushSystem {
     pub fn dpi_factor_changed(&mut self, dpi_factor: f64) {
         self.dpi_factor = dpi_factor;
         self.swapchain_invalidated = true;
+    }
+
+    pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
+        let image_bytes = std::fs::read(path.as_ref()).unwrap();
+        let sprite_img =  image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let (w, h) = sprite_img.dimensions();
+
+        self.load_sprite([w, h], &sprite_img)
     }
 
     pub fn load_sprite(&mut self, size: [u32; 2], data: &[u8]) -> Sprite {
