@@ -14,5 +14,9 @@ git = "https://github.com/gfx-rs/gfx"
 [dependencies.gfx-backend-metal]
 git = "https://github.com/gfx-rs/gfx"
 
+[dependencies.rusttype]
+version = "~0.7.2"
+features = ["gpu_cache"]
+
 [build-dependencies]
 glsl-to-spirv = "~0.1.6"
