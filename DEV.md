@@ -1,3 +1,14 @@
+Next
+===
+
+- [ ] Convert glyphs to sprites before rendering, combine them before depth sorting
+- [ ] Try to get pixelly text (1-bit colour, no subpixel)
+    - [ ] And add a way to configure it one way or the other
+- [ ] Allow setting text colour
+- [ ] Fix hardcoded font ID so multiple fonts can be used
+- [ ] Implement custom layout with newlines and max-width
+- [ ] Add a separate font texture into a texture array instead of sharing with sprites
+
 Library
 ===
 
@@ -29,6 +40,13 @@ Currently only designing the top layer of the library. It will need split into m
 - [ ] Configure sprite scaling mode (linear / nearest)
 - [ ] Configure pixel-density of a sprite
 
+## Text
+
+- [x] Render truetype text
+- [ ] Render multiline text
+- [ ] Render pixel-ish text
+- [ ] Text rendering controls (line spacing, character spacing, etc.)
+
 ## Backends
 
 - [x] Metal backend
@@ -59,6 +77,12 @@ Currently only designing the top layer of the library. It will need split into m
 - [ ] Consider allowing rendering onto the main surface, outside canvas boundary
     - Maybe this is too high level - this could already be implemented with free
       aspect and viewport/camera for the inner "canvas"
+
+## Capture
+
+- [ ] Allow screenshots
+- [ ] Allow video recording (at least as a sequence of frames)
+- [ ] Allow outputting font/sprite atlas for debugging
 
 ## Build-time
 
