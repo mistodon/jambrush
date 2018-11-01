@@ -637,7 +637,7 @@ pub struct JamBrushRenderer<'a> {
     frame_index: SwapImageIndex,
     blit_command_buffer: Option<Submit<backend::Backend, Graphics, OneShot, Primary>>,
     sprites: Vec<(f32, SpritePushConstants)>,
-    glyphs: Vec<(f32, PositionedGlyph<'static>)>,
+    glyphs: Vec<(f32, [f32; 4], PositionedGlyph<'static>)>,
     finished: bool,
 }
 
@@ -765,7 +765,7 @@ impl<'a> JamBrushRenderer<'a> {
         self.sprites.push((depth, data));
     }
 
-    pub fn text(&mut self, font: &Font, text: &str, pos: [f32; 2], scale: [f32; 2], depth: f32) {
+    pub fn text(&mut self, font: &Font, text: &str, pos: [f32; 2], size: f32, tint: [f32; 4], depth: f32) {
         use rusttype::{Scale, Point};
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
@@ -773,12 +773,12 @@ impl<'a> JamBrushRenderer<'a> {
 
         let font_id = font.id;
         let font = &self.draw_system.fonts[font_id];
-        let glyphs = font.layout(text, Scale { x: scale[0], y: scale[1] }, Point { x: pos[0], y: pos[1] } );
+        let glyphs = font.layout(text, Scale { x: size, y: size }, Point { x: pos[0], y: pos[1] } );
 
         for glyph in glyphs {
             let glyph = glyph.standalone();
             self.draw_system.glyph_cache.queue_glyph(font_id, glyph.clone());
-            self.glyphs.push((depth, glyph));
+            self.glyphs.push((depth, tint, glyph));
         }
     }
 
@@ -873,7 +873,7 @@ impl<'a> JamBrushRenderer<'a> {
 
                 self.glyphs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-                for (_, glyph) in &self.glyphs {
+                for (_, tint, glyph) in &self.glyphs {
                     use rusttype::{Point};
 
                     let scale = glyph.scale();
@@ -897,7 +897,7 @@ impl<'a> JamBrushRenderer<'a> {
                                     [x as f32, y as f32 + ascent],
                                     [w, h],
                                     [res_x as f32, res_y as f32]),
-                                tint: [1.0, 1.0, 1.0, 1.0],
+                                tint: *tint,
                                 uv_origin: [u, v + 0.5],
                                 uv_scale: [uw, vh / 2.0],
                             }
