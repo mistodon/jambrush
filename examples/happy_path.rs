@@ -34,7 +34,10 @@ fn main() {
     };
 
     let inconsolata = {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/inconsolata_bold.ttf");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/examples/inconsolata_bold.ttf"
+        );
         jambrush.load_font_file(path)
     };
 
@@ -71,14 +74,55 @@ fn main() {
             renderer.sprite(&star_sprite, [0.0, 0.0], 0.0);
             renderer.sprite(&ship_sprite, [64.0, 16.0], 0.0);
 
-            renderer.text(&inconsolata, "Hello\nlittle\nspaceship\ngame", [-1.0, 0.0], 14.0, [0.0, 0.0, 0.5, 1.0], 0.0);
-            renderer.text(&inconsolata, "Hello\nlittle\nspaceship\ngame", [1.0, 0.0], 14.0, [0.0, 0.0, 0.5, 1.0], 0.0);
-            renderer.text(&inconsolata, "Hello\nlittle\nspaceship\ngame", [0.0, -1.0], 14.0, [0.0, 0.0, 0.5, 1.0], 0.0);
-            renderer.text(&inconsolata, "Hello\nlittle\nspaceship\ngame", [0.0, 1.0], 14.0, [0.0, 0.0, 0.5, 1.0], 0.0);
-            renderer.text(&inconsolata, "Hello\nlittle\nspaceship\ngame", [0.0, 0.0], 14.0, [1.0, 1.0, 1.0, 1.0], 0.0);
+            renderer.text(
+                &inconsolata,
+                "Hello\nlittle\nspaceship\ngame",
+                [-1.0, 0.0],
+                14.0,
+                [0.0, 0.0, 0.5, 1.0],
+                0.0,
+            );
+            renderer.text(
+                &inconsolata,
+                "Hello\nlittle\nspaceship\ngame",
+                [1.0, 0.0],
+                14.0,
+                [0.0, 0.0, 0.5, 1.0],
+                0.0,
+            );
+            renderer.text(
+                &inconsolata,
+                "Hello\nlittle\nspaceship\ngame",
+                [0.0, -1.0],
+                14.0,
+                [0.0, 0.0, 0.5, 1.0],
+                0.0,
+            );
+            renderer.text(
+                &inconsolata,
+                "Hello\nlittle\nspaceship\ngame",
+                [0.0, 1.0],
+                14.0,
+                [0.0, 0.0, 0.5, 1.0],
+                0.0,
+            );
+            renderer.text(
+                &inconsolata,
+                "Hello\nlittle\nspaceship\ngame",
+                [0.0, 0.0],
+                14.0,
+                [1.0, 1.0, 1.0, 1.0],
+                0.0,
+            );
 
-
-            renderer.text(&spicyrice, "Some bigger text", [40.0, 20.0], 43.0, [1.0, 1.0, 1.0, 1.0], 0.0);
+            renderer.text(
+                &spicyrice,
+                "Some bigger text",
+                [40.0, 20.0],
+                43.0,
+                [1.0, 1.0, 1.0, 1.0],
+                0.0,
+            );
 
             renderer.finish();
         }
