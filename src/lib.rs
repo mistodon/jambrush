@@ -821,10 +821,48 @@ impl<'a> JamBrushRenderer<'a> {
         self.draw_system.update_atlas();
     }
 
+    fn convert_glyphs_to_sprites(&mut self) {
+        let (res_x, res_y) = self.draw_system.resolution;
+
+        for (depth, glyph) in self.glyphs.drain(..) {
+            use rusttype::{Point};
+
+            let Glyph { glyph, tint, font_id } = glyph;
+            let scale = glyph.scale();
+            let ascent = self.draw_system.fonts[font_id].v_metrics(scale).ascent;
+            let texcoords = self.draw_system.glyph_cache.rect_for(font_id, &glyph).unwrap();
+
+            if let Some((uv_rect, px_rect)) = texcoords {
+                let glyph_sprite = {
+
+                    let Point { x, y } = px_rect.min;
+                    let w = px_rect.width() as f32;
+                    let h = px_rect.height() as f32;
+
+                    let Point { x: u, y: v } = uv_rect.min;
+                    let uw = uv_rect.width();
+                    let vh = uv_rect.height();
+
+                    SpritePushConstants {
+                        transform: make_transform(
+                                       [x as f32, y as f32 + ascent],
+                                       [w, h],
+                                       [res_x as f32, res_y as f32]),
+                                       tint,
+                                       uv_origin: [u, v + 0.5],
+                                       uv_scale: [uw, vh / 2.0],
+                    }
+                };
+
+                self.sprites.push((depth, glyph_sprite));
+            }
+        }
+
+    }
+
     pub fn finish(mut self) {
         self.update_font_atlas();
-
-        let (res_x, res_y) = self.draw_system.resolution;
+        self.convert_glyphs_to_sprites();
 
         let (swapchain, extent, frame_images, _frame_views, framebuffers) =
             self.draw_system.swapchain.as_mut().unwrap();
@@ -876,49 +914,6 @@ impl<'a> JamBrushRenderer<'a> {
                     );
 
                     encoder.draw(0..6, 0..1);
-                }
-
-                self.glyphs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-                for (_, glyph) in &self.glyphs {
-                    use rusttype::{Point};
-
-                    let Glyph { glyph, tint, font_id } = glyph;
-                    let scale = glyph.scale();
-                    let ascent = self.draw_system.fonts[*font_id].v_metrics(scale).ascent;
-                    let texcoords = self.draw_system.glyph_cache.rect_for(*font_id, glyph).unwrap();
-
-                    if let Some((uv_rect, px_rect)) = texcoords {
-                        let glyph_sprite = {
-
-                            let Point { x, y } = px_rect.min;
-                            let w = px_rect.width() as f32;
-                            let h = px_rect.height() as f32;
-
-                            let Point { x: u, y: v } = uv_rect.min;
-                            let uw = uv_rect.width();
-                            let vh = uv_rect.height();
-
-                            SpritePushConstants {
-                                transform: make_transform(
-                                    [x as f32, y as f32 + ascent],
-                                    [w, h],
-                                    [res_x as f32, res_y as f32]),
-                                tint: *tint,
-                                uv_origin: [u, v + 0.5],
-                                uv_scale: [uw, vh / 2.0],
-                            }
-                        };
-
-                        encoder.push_graphics_constants(
-                            &self.draw_system.pipeline_layout,
-                            ShaderStageFlags::VERTEX,
-                            0,
-                            utils::push_constant_data(&glyph_sprite),
-                        );
-
-                        encoder.draw(0..6, 0..1);
-                    }
                 }
             }
 
