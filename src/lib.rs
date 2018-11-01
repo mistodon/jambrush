@@ -25,6 +25,13 @@ struct SpritePushConstants {
     pub uv_scale: [f32; 2],
 }
 
+#[derive(Debug, Clone)]
+struct Glyph {
+    pub glyph: PositionedGlyph<'static>,
+    pub tint: [f32; 4],
+    pub font_id: usize,
+}
+
 #[derive(Debug)]
 pub struct Sprite {
     id: usize,
@@ -637,7 +644,7 @@ pub struct JamBrushRenderer<'a> {
     frame_index: SwapImageIndex,
     blit_command_buffer: Option<Submit<backend::Backend, Graphics, OneShot, Primary>>,
     sprites: Vec<(f32, SpritePushConstants)>,
-    glyphs: Vec<(f32, [f32; 4], PositionedGlyph<'static>)>,
+    glyphs: Vec<(f32, Glyph)>,
     finished: bool,
 }
 
@@ -778,7 +785,7 @@ impl<'a> JamBrushRenderer<'a> {
         for glyph in glyphs {
             let glyph = glyph.standalone();
             self.draw_system.glyph_cache.queue_glyph(font_id, glyph.clone());
-            self.glyphs.push((depth, tint, glyph));
+            self.glyphs.push((depth, Glyph { glyph, tint, font_id }));
         }
     }
 
@@ -873,13 +880,13 @@ impl<'a> JamBrushRenderer<'a> {
 
                 self.glyphs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-                for (_, tint, glyph) in &self.glyphs {
+                for (_, glyph) in &self.glyphs {
                     use rusttype::{Point};
 
+                    let Glyph { glyph, tint, font_id } = glyph;
                     let scale = glyph.scale();
-                    let font_id = 0; // TODO: use the actual font id
-                    let ascent = self.draw_system.fonts[font_id].v_metrics(scale).ascent;
-                    let texcoords = self.draw_system.glyph_cache.rect_for(font_id, glyph).unwrap();
+                    let ascent = self.draw_system.fonts[*font_id].v_metrics(scale).ascent;
+                    let texcoords = self.draw_system.glyph_cache.rect_for(*font_id, glyph).unwrap();
 
                     if let Some((uv_rect, px_rect)) = texcoords {
                         let glyph_sprite = {
