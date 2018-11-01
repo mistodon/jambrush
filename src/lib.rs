@@ -9,8 +9,8 @@ mod gfxutils;
 
 use std::path::Path;
 
-use image::{DynamicImage, Rgba, RgbaImage};
-use rusttype::{Font as RTFont, gpu_cache::Cache as RTCache, PositionedGlyph};
+use image::{DynamicImage, GenericImage, RgbaImage};
+use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
 use texture_packer::TexturePacker;
 use winit::Window;
 
@@ -46,7 +46,7 @@ pub struct Font {
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
-    instance: backend::Instance,
+    _instance: backend::Instance,
     surface: backend::Surface,
     adapter: gfx_hal::Adapter<backend::Backend>,
     device: backend::Device,
@@ -94,14 +94,14 @@ pub struct JamBrushSystem {
 
 impl JamBrushSystem {
     pub fn new(window: &Window, resolution: (u32, u32)) -> Self {
-        let instance = backend::Instance::create("JamBrush", 1);
-        let mut surface = instance.create_surface(&window);
-        let mut adapter = instance.enumerate_adapters().remove(0);
-        let (device, mut queue_group) = adapter
+        let _instance = backend::Instance::create("JamBrush", 1);
+        let surface = _instance.create_surface(&window);
+        let adapter = _instance.enumerate_adapters().remove(0);
+        let (device, queue_group) = adapter
             .open_with::<_, Graphics>(1, |family| surface.supports_queue_family(family))
             .unwrap();
 
-        let mut command_pool = device
+        let command_pool = device
             .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty(), 16)
             .unwrap();
 
@@ -362,7 +362,7 @@ impl JamBrushSystem {
         let swapchain = None;
 
         JamBrushSystem {
-            instance,
+            _instance,
             surface,
             adapter,
             device,
@@ -478,14 +478,13 @@ impl JamBrushSystem {
 
     pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
         let image_bytes = std::fs::read(path.as_ref()).unwrap();
-        let sprite_img =  image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let sprite_img = image::load_from_memory(&image_bytes).unwrap().to_rgba();
         let (w, h) = sprite_img.dimensions();
 
         self.load_sprite([w, h], &sprite_img)
     }
 
     pub fn load_sprite(&mut self, size: [u32; 2], data: &[u8]) -> Sprite {
-        use image::{GenericImage, ImageBuffer, Rgba};
         use texture_packer::TexturePackerConfig;
 
         let sprite_index = self.sprite_textures.len();
@@ -661,7 +660,7 @@ impl<'a> JamBrushRenderer<'a> {
         let blit_command_buffer: Submit<backend::Backend, Graphics, OneShot, Primary>;
 
         {
-            let (swapchain, extent, frame_images, _frame_views, framebuffers) =
+            let (swapchain, extent, _frame_images, _frame_views, framebuffers) =
                 draw_system.swapchain.as_mut().unwrap();
 
             // TODO: handle failure
@@ -772,20 +771,44 @@ impl<'a> JamBrushRenderer<'a> {
         self.sprites.push((depth, data));
     }
 
-    pub fn text(&mut self, font: &Font, text: &str, pos: [f32; 2], size: f32, tint: [f32; 4], depth: f32) {
-        use rusttype::{Scale, Point};
+    pub fn text(
+        &mut self,
+        font: &Font,
+        text: &str,
+        pos: [f32; 2],
+        size: f32,
+        tint: [f32; 4],
+        depth: f32,
+    ) {
+        use rusttype::{Point, Scale};
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
         // TODO: copyin' a lotta glyphs here!
 
         let font_id = font.id;
         let font = &self.draw_system.fonts[font_id];
-        let glyphs = font.layout(text, Scale { x: size, y: size }, Point { x: pos[0], y: pos[1] } );
+        let glyphs = font.layout(
+            text,
+            Scale { x: size, y: size },
+            Point {
+                x: pos[0],
+                y: pos[1],
+            },
+        );
 
         for glyph in glyphs {
             let glyph = glyph.standalone();
-            self.draw_system.glyph_cache.queue_glyph(font_id, glyph.clone());
-            self.glyphs.push((depth, Glyph { glyph, tint, font_id }));
+            self.draw_system
+                .glyph_cache
+                .queue_glyph(font_id, glyph.clone());
+            self.glyphs.push((
+                depth,
+                Glyph {
+                    glyph,
+                    tint,
+                    font_id,
+                },
+            ));
         }
     }
 
@@ -796,25 +819,25 @@ impl<'a> JamBrushRenderer<'a> {
 
             let atlas_height = font_atlas_image.height();
 
-            glyph_cache.cache_queued(|dest_rect, data| {
-                use image::{GenericImage, ImageBuffer, Rgba};
-                use rusttype::Point;
+            glyph_cache
+                .cache_queued(|dest_rect, data| {
+                    use rusttype::Point;
 
-                let Point { x, y } = dest_rect.min;
-                let w = dest_rect.width();
-                let h = dest_rect.height();
+                    let Point { x, y } = dest_rect.min;
+                    let w = dest_rect.width();
+                    let h = dest_rect.height();
 
-                let mut rgba_buffer = vec![0; data.len() * 4];
-                for (&alpha, rgba) in data.into_iter().zip(rgba_buffer.chunks_mut(4)) {
-                    rgba[0] = 255;
-                    rgba[1] = 255;
-                    rgba[2] = 255;
-                    rgba[3] = alpha;
-                }
+                    let mut rgba_buffer = vec![0; data.len() * 4];
+                    for (&alpha, rgba) in data.into_iter().zip(rgba_buffer.chunks_mut(4)) {
+                        rgba[0] = 255;
+                        rgba[1] = 255;
+                        rgba[2] = 255;
+                        rgba[3] = alpha;
+                    }
 
-                let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
-                font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
-            }).unwrap();
+                    let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
+                    font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
+                }).unwrap();
         }
 
         // TODO: Use a separate font texture, in a texture array
@@ -825,16 +848,23 @@ impl<'a> JamBrushRenderer<'a> {
         let (res_x, res_y) = self.draw_system.resolution;
 
         for (depth, glyph) in self.glyphs.drain(..) {
-            use rusttype::{Point};
+            use rusttype::Point;
 
-            let Glyph { glyph, tint, font_id } = glyph;
+            let Glyph {
+                glyph,
+                tint,
+                font_id,
+            } = glyph;
             let scale = glyph.scale();
             let ascent = self.draw_system.fonts[font_id].v_metrics(scale).ascent;
-            let texcoords = self.draw_system.glyph_cache.rect_for(font_id, &glyph).unwrap();
+            let texcoords = self
+                .draw_system
+                .glyph_cache
+                .rect_for(font_id, &glyph)
+                .unwrap();
 
             if let Some((uv_rect, px_rect)) = texcoords {
                 let glyph_sprite = {
-
                     let Point { x, y } = px_rect.min;
                     let w = px_rect.width() as f32;
                     let h = px_rect.height() as f32;
@@ -845,26 +875,26 @@ impl<'a> JamBrushRenderer<'a> {
 
                     SpritePushConstants {
                         transform: make_transform(
-                                       [x as f32, y as f32 + ascent],
-                                       [w, h],
-                                       [res_x as f32, res_y as f32]),
-                                       tint,
-                                       uv_origin: [u, v + 0.5],
-                                       uv_scale: [uw, vh / 2.0],
+                            [x as f32, y as f32 + ascent],
+                            [w, h],
+                            [res_x as f32, res_y as f32],
+                        ),
+                        tint,
+                        uv_origin: [u, v + 0.5],
+                        uv_scale: [uw, vh / 2.0],
                     }
                 };
 
                 self.sprites.push((depth, glyph_sprite));
             }
         }
-
     }
 
     pub fn finish(mut self) {
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
 
-        let (swapchain, extent, frame_images, _frame_views, framebuffers) =
+        let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
             self.draw_system.swapchain.as_mut().unwrap();
 
         let scene_command_buffer = {
@@ -973,4 +1003,3 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
         [dx, dy, 0.0, 1.0],
     ]
 }
-

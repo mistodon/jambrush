@@ -96,7 +96,7 @@ pub mod utils {
         (buffer, buffer_memory)
     }
 
-    pub fn fill_buffer<Item: Copy>(device: &TDevice, buffer_memory: &mut TMemory, items: &[Item]) {
+    pub fn _fill_buffer<Item: Copy>(device: &TDevice, buffer_memory: &mut TMemory, items: &[Item]) {
         let stride = ::std::mem::size_of::<Item>() as u64;
         let buffer_len = items.len() as u64 * stride;
 
@@ -107,7 +107,7 @@ pub mod utils {
         device.release_mapping_writer(dest).unwrap();
     }
 
-    pub fn create_buffer<Item: Copy>(
+    pub fn _create_buffer<Item: Copy>(
         device: &TDevice,
         memory_types: &[MemoryType],
         properties: Properties,
@@ -117,7 +117,7 @@ pub mod utils {
         let (empty_buffer, mut empty_buffer_memory) =
             empty_buffer::<Item>(device, memory_types, properties, usage, items.len());
 
-        fill_buffer::<Item>(device, &mut empty_buffer_memory, items);
+        _fill_buffer::<Item>(device, &mut empty_buffer_memory, items);
 
         (empty_buffer, empty_buffer_memory)
     }
