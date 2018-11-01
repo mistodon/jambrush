@@ -1,11 +1,12 @@
 Next
 ===
 
-- [ ] Convert glyphs to sprites before rendering, combine them before depth sorting
+- [x] Convert glyphs to sprites before rendering, combine them before depth sorting
 - [ ] Stop the tops of some letters being cut off
 - [~] Try to get pixelly text (1-bit colour, no subpixel)
     - [ ] And add a way to configure it one way or the other
         - It sort of works, need to try it with a blockier font though.
+        - Also, to allow both modes to work on a font-by-font basis, probably have to do make position sensitivity... work
 - [x] Allow setting text colour
 - [x] Fix hardcoded font ID so multiple fonts can be used
 - [ ] Implement custom layout with newlines and max-width
@@ -48,6 +49,7 @@ Currently only designing the top layer of the library. It will need split into m
 - [ ] Render multiline text
 - [ ] Render pixel-ish text
 - [ ] Text rendering controls (line spacing, character spacing, etc.)
+- [ ] Support bitmap fonts - since uh...  you uh... can't make tiny pixelly vector text look that great...
 
 ## Backends
 
