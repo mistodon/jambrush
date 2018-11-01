@@ -2,10 +2,12 @@ Next
 ===
 
 - [ ] Convert glyphs to sprites before rendering, combine them before depth sorting
-- [ ] Try to get pixelly text (1-bit colour, no subpixel)
+- [ ] Stop the tops of some letters being cut off
+- [~] Try to get pixelly text (1-bit colour, no subpixel)
     - [ ] And add a way to configure it one way or the other
-- [ ] Allow setting text colour
-- [ ] Fix hardcoded font ID so multiple fonts can be used
+        - It sort of works, need to try it with a blockier font though.
+- [x] Allow setting text colour
+- [x] Fix hardcoded font ID so multiple fonts can be used
 - [ ] Implement custom layout with newlines and max-width
 - [ ] Add a separate font texture into a texture array instead of sharing with sprites
 
