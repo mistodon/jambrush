@@ -35,6 +35,33 @@ struct Glyph {
 #[derive(Debug)]
 pub struct Sprite {
     id: usize,
+    sub_uv_offset: [f32; 2],
+    sub_uv_scale: [f32; 2],
+}
+
+#[derive(Debug)]
+pub struct SpriteSheet {
+    id: usize,
+    width: usize,
+    height: usize,
+}
+
+impl SpriteSheet {
+    pub fn new(sprite: &Sprite, width: usize, height: usize) -> Self {
+        SpriteSheet {
+            id: sprite.id,
+            width,
+            height,
+        }
+    }
+
+    pub fn sprite(&self, x: usize, y: usize) -> Sprite {
+        Sprite {
+            id: self.id,
+            sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
+            sub_uv_offset: [x as f32, y as f32],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -536,7 +563,11 @@ impl JamBrushSystem {
 
         self.update_atlas();
 
-        Sprite { id: sprite_index }
+        Sprite {
+            id: sprite_index,
+            sub_uv_scale: [1.0, 1.0],
+            sub_uv_offset: [0.0, 0.0],
+        }
     }
 
     pub fn load_font_file<P: AsRef<Path>>(&mut self, path: P) -> Font {
@@ -774,11 +805,18 @@ impl<'a> JamBrushRenderer<'a> {
         let (uv_origin, uv_scale, pixel_scale) = self.draw_system.sprite_regions[sprite.id];
         let (res_x, res_y) = self.draw_system.resolution;
 
+        let [px, py] = pixel_scale;
+        let [sx, sy] = sprite.sub_uv_scale;
+        let uw = uv_scale[0] * sx;
+        let uh = uv_scale[1] * sy;
+        let u0 = uv_origin[0] + uw * sprite.sub_uv_offset[0];
+        let v0 = uv_origin[1] + uh * sprite.sub_uv_offset[1];
+
         let data = SpritePushConstants {
-            transform: make_transform(pos, pixel_scale, [res_x as f32, res_y as f32]),
+            transform: make_transform(pos, [px*sx, py*sy], [res_x as f32, res_y as f32]),
             tint: [1.0, 1.0, 1.0, 1.0],
-            uv_origin,
-            uv_scale,
+            uv_origin: [u0, v0],
+            uv_scale: [uw, uh],
         };
 
         self.sprites.push((depth, data));
