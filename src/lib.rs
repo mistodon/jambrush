@@ -42,10 +42,22 @@ pub struct Font {
     id: usize,
 }
 
+#[derive(Debug, Default)]
+struct DropAlarm(bool);
+
+impl Drop for DropAlarm {
+    fn drop(&mut self) {
+        if !self.0 {
+            panic!("JamBrushSystem dropped without calling `destroy()`");
+        }
+    }
+}
+
 // TODO: all the unwraps...
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
+    drop_alarm: DropAlarm,
     _instance: backend::Instance,
     surface: backend::Surface,
     adapter: gfx_hal::Adapter<backend::Backend>,
@@ -89,7 +101,6 @@ pub struct JamBrushSystem {
     swapchain_invalidated: bool,
     resolution: (u32, u32),
     dpi_factor: f64,
-    _private: (),
 }
 
 impl JamBrushSystem {
@@ -399,11 +410,13 @@ impl JamBrushSystem {
             swapchain_invalidated: true,
             resolution,
             dpi_factor: window.get_hidpi_factor(),
-            _private: (),
+            drop_alarm: DropAlarm(false),
         }
     }
 
     pub fn destroy(mut self) {
+        self.drop_alarm.0 = true;
+
         if self.swapchain.is_some() {
             self.destroy_swapchain();
         }
