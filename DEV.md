@@ -1,16 +1,6 @@
 Next
 ===
 
-- [x] Convert glyphs to sprites before rendering, combine them before depth sorting
-- [ ] Stop the tops of some letters being cut off
-- [~] Try to get pixelly text (1-bit colour, no subpixel)
-    - [ ] And add a way to configure it one way or the other
-        - It sort of works, need to try it with a blockier font though.
-        - Also, to allow both modes to work on a font-by-font basis, probably have to do make position sensitivity... work
-- [x] Allow setting text colour
-- [x] Fix hardcoded font ID so multiple fonts can be used
-- [ ] Implement custom layout with newlines and max-width
-- [ ] Add a separate font texture into a texture array instead of sharing with sprites
 
 Library
 ===
@@ -37,7 +27,10 @@ Currently only designing the top layer of the library. It will need split into m
 - [ ] Find a nice way to layer the API
     - At its simplest, fn sprite(sprite, pos, layer)
     - At its most complex, fn sprite(sprite, pos, layer, tint, lighting, scale, rotation)
-- [ ] Add a little shortcut for animation frames (Sheet[i] = Sprite)
+- [x] Add a little shortcut for animation frames (SpriteSheet)
+    - [x] Allow constructing a SpriteSheet from width and height in _frames_
+    - [ ] Allow constructing a SpriteSheet from the _size of one frame_
+        - I think this might involve storing the pixel size of a sprite in Sprite
 - [ ] Review sprite shader - optimize and simplify
 - [ ] Actually batch sprites in a vertex buffer
 - [ ] Configure sprite scaling mode (linear / nearest)
@@ -47,9 +40,12 @@ Currently only designing the top layer of the library. It will need split into m
 
 - [x] Render truetype text
 - [ ] Render multiline text
-- [ ] Render pixel-ish text
+- [ ] Render pixel-ish text (?)
 - [ ] Text rendering controls (line spacing, character spacing, etc.)
 - [ ] Support bitmap fonts - since uh...  you uh... can't make tiny pixelly vector text look that great...
+- [ ] Stop the tops of some letters being cut off
+- [ ] Implement custom layout with newlines and max-width
+- [ ] Add a separate font texture into a texture array instead of sharing with sprites
 
 ## Backends
 
@@ -71,6 +67,7 @@ Currently only designing the top layer of the library. It will need split into m
 
 - [ ] Camera offset
 - [ ] Viewport/scissor rect
+- [ ] Blending modes?
 
 ## Stencil
 

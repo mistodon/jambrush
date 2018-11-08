@@ -47,7 +47,8 @@ pub struct SpriteSheet {
 }
 
 impl SpriteSheet {
-    pub fn new(sprite: &Sprite, width: usize, height: usize) -> Self {
+    pub fn new(sprite: &Sprite, size_in_sprites: [usize; 2]) -> Self {
+        let [width, height] = size_in_sprites;
         SpriteSheet {
             id: sprite.id,
             width,
@@ -55,7 +56,8 @@ impl SpriteSheet {
         }
     }
 
-    pub fn sprite(&self, x: usize, y: usize) -> Sprite {
+    pub fn sprite(&self, coord: [usize; 2]) -> Sprite {
+        let [x, y] = coord;
         Sprite {
             id: self.id,
             sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
