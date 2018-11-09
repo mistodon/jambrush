@@ -84,6 +84,14 @@ impl Drop for DropAlarm {
 
 // TODO: all the unwraps...
 
+#[derive(Debug, Default, Clone)]
+pub struct JamBrushConfig {
+    pub canvas_resolution: Option<[u32; 2]>,
+    pub max_texture_atlas_size: Option<u32>,
+    pub logging: bool,
+    pub debugging: bool,
+}
+
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
     drop_alarm: DropAlarm,
@@ -128,12 +136,26 @@ pub struct JamBrushSystem {
         Vec<TFramebuffer>,
     )>,
     swapchain_invalidated: bool,
-    resolution: (u32, u32),
+    resolution: [u32; 2],
     dpi_factor: f64,
+    logging: bool,
+    debugging: bool,
 }
 
 impl JamBrushSystem {
-    pub fn new(window: &Window, resolution: (u32, u32)) -> Self {
+    pub fn new(window: &Window, config: &JamBrushConfig) -> Self {
+
+        let resolution = config.canvas_resolution.unwrap_or_else(|| {
+            let (window_w, window_h) = window.get_inner_size().unwrap().into();
+            [window_w, window_h]
+        });
+
+        let logging = config.logging;
+
+        if logging {
+            println!("Constructing JamBrushSystem:");
+        }
+
         let _instance = backend::Instance::create("JamBrush", 1);
         let surface = _instance.create_surface(&window);
         let adapter = _instance.enumerate_adapters().remove(0);
@@ -300,10 +322,15 @@ impl JamBrushSystem {
 
         let memory_types = adapter.physical_device.memory_properties().memory_types;
 
+        if logging {
+            println!("  Canvas resolution: {} x {}", resolution[0], resolution[1]);
+        }
+
         let (rtt_image, rtt_memory, rtt_view, rtt_sampler, rtt_framebuffer) = {
+            let [width, height] = resolution;
             let extent = Extent {
-                width: resolution.0,
-                height: resolution.1,
+                width,
+                height,
                 depth: 1,
             };
 
@@ -335,7 +362,12 @@ impl JamBrushSystem {
         };
 
         let limits = adapter.physical_device.limits();
-        let atlas_size = limits.max_texture_size as u32;
+        let atlas_size_limit = limits.max_texture_size as u32;
+        let atlas_size = config.max_texture_atlas_size.unwrap_or(atlas_size_limit).min(atlas_size_limit);
+
+        if logging {
+            println!("  Texture atlas dimensions: {} x {}", atlas_size, atlas_size);
+        }
 
         let atlas_image = DynamicImage::new_rgba8(atlas_size, atlas_size).to_rgba();
 
@@ -402,6 +434,7 @@ impl JamBrushSystem {
         let swapchain = None;
 
         JamBrushSystem {
+            drop_alarm: DropAlarm(false),
             _instance,
             surface,
             adapter,
@@ -439,7 +472,8 @@ impl JamBrushSystem {
             swapchain_invalidated: true,
             resolution,
             dpi_factor: window.get_hidpi_factor(),
-            drop_alarm: DropAlarm(false),
+            logging,
+            debugging: config.debugging,
         }
     }
 
@@ -497,6 +531,12 @@ impl JamBrushSystem {
         device.destroy_render_pass(render_pass);
     }
 
+    fn log<S: AsRef<str>>(&self, message: S) {
+        if self.logging {
+            println!("JamBrush: {}", message.as_ref())
+        }
+    }
+
     pub fn start_rendering(
         &mut self,
         canvas_clear_color: [f32; 4],
@@ -538,6 +578,7 @@ impl JamBrushSystem {
             max_width: aw,
             max_height: ah / 2,
             allow_rotation: false,
+            texture_outlines: self.debugging,
             ..Default::default()
         };
 
@@ -612,6 +653,8 @@ impl JamBrushSystem {
     }
 
     fn destroy_swapchain(&mut self) {
+        self.log("Destroying swapchain");
+
         let (swapchain, _extent, _frame_images, frame_views, framebuffers) =
             self.swapchain.take().unwrap();
 
@@ -630,14 +673,22 @@ impl JamBrushSystem {
     }
 
     fn create_swapchain(&mut self) {
+        self.log("Creating swapchain");
+
         self.swapchain_invalidated = false;
         let (caps, _, _) = self.surface.compatibility(&self.adapter.physical_device);
 
         let mut swap_config = SwapchainConfig::from_caps(&caps, self.surface_color_format);
+
+        self.log(format!("  Surface extent: {} x {}", swap_config.extent.width, swap_config.extent.height));
+        self.log(format!("  DPI factor: {}", self.dpi_factor));
+
         swap_config.extent.width =
             (f64::from(swap_config.extent.width) * self.dpi_factor).round() as u32;
         swap_config.extent.height =
             (f64::from(swap_config.extent.height) * self.dpi_factor).round() as u32;
+
+        self.log(format!("  Swapchain dimensions: {} x {}", swap_config.extent.width, swap_config.extent.height));
 
         let extent = swap_config.extent.to_extent();
         let (swapchain, backbuffer) = self
@@ -717,7 +768,7 @@ impl<'a> JamBrushRenderer<'a> {
             blit_command_buffer = {
                 let mut command_buffer = draw_system.command_pool.acquire_command_buffer(false);
 
-                let (vwidth, vheight) = draw_system.resolution;
+                let [vwidth, vheight] = draw_system.resolution;
 
                 let base_width = (f64::from(vwidth) * draw_system.dpi_factor) as u32;
                 let base_height = (f64::from(vheight) * draw_system.dpi_factor) as u32;
@@ -805,7 +856,7 @@ impl<'a> JamBrushRenderer<'a> {
 
     pub fn sprite(&mut self, sprite: &Sprite, pos: [f32; 2], depth: f32) {
         let (uv_origin, uv_scale, pixel_scale) = self.draw_system.sprite_regions[sprite.id];
-        let (res_x, res_y) = self.draw_system.resolution;
+        let [res_x, res_y] = self.draw_system.resolution;
 
         let [px, py] = pixel_scale;
         let [sx, sy] = sprite.sub_uv_scale;
@@ -898,7 +949,7 @@ impl<'a> JamBrushRenderer<'a> {
     }
 
     fn convert_glyphs_to_sprites(&mut self) {
-        let (res_x, res_y) = self.draw_system.resolution;
+        let [res_x, res_y] = self.draw_system.resolution;
 
         for (depth, glyph) in self.glyphs.drain(..) {
             use rusttype::Point;
@@ -953,7 +1004,7 @@ impl<'a> JamBrushRenderer<'a> {
         let scene_command_buffer = {
             let mut command_buffer = self.draw_system.command_pool.acquire_command_buffer(false);
 
-            let (vwidth, vheight) = self.draw_system.resolution;
+            let [vwidth, vheight] = self.draw_system.resolution;
             let viewport = Viewport {
                 rect: Rect {
                     x: 0,

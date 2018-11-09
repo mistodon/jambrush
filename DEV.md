@@ -1,6 +1,19 @@
 Next
 ===
 
+Debugging tools!
+
+- [x] Optional logging
+- [x] Configuration object for JamDrawSystem
+    - [x] Max texture atlas size
+- [ ] Output screen capture
+- [ ] Output texture atlas
+    - [ ] Optionally with red outlines
+
+Ergonomics:
+
+- [ ] load_sprite should take raw image bytes, not decoded image bytes
+- [ ] load_sprite_raw can take RGBA bytes + size
 
 Library
 ===
