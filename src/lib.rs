@@ -92,6 +92,13 @@ pub struct JamBrushConfig {
     pub debugging: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capture {
+    TextureAtlas,
+    Canvas,
+    Window,
+}
+
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
     drop_alarm: DropAlarm,
@@ -578,6 +585,7 @@ impl JamBrushSystem {
             max_width: aw,
             max_height: ah / 2,
             allow_rotation: false,
+            trim: false,
             texture_outlines: self.debugging,
             ..Default::default()
         };
@@ -605,6 +613,9 @@ impl JamBrushSystem {
         }
 
         self.update_atlas();
+
+        let (uv_origin, uv_size, _) = self.sprite_regions[sprite_index];
+        self.log(format!("  Sprite {} loaded: uv_origin: {:?},   uv_size: {:?}", sprite_index, uv_origin, uv_size));
 
         Sprite {
             id: sprite_index,
@@ -731,6 +742,97 @@ impl JamBrushSystem {
         };
 
         self.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
+    }
+
+    pub fn capture_to_file<P: AsRef<Path>>(&mut self, capture_type: Capture, path: P) {
+        use image::ColorType;
+
+        self.device.wait_idle().unwrap();
+        self.device.reset_fence(&self.texture_fence).unwrap();
+
+        let swizzle = false;
+        let path = path.as_ref();
+        let image = match capture_type {
+            Capture::Window => unimplemented!(),
+            Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
+            Capture::TextureAtlas => &self.atlas_texture,
+        };
+
+        let footprint = self.device.get_image_subresource_footprint(
+            image,
+            Subresource {
+                aspects: Aspects::COLOR,
+                level: 0,
+                layer: 0,
+            },
+        );
+        let memory_size = footprint.slice.end - footprint.slice.start;
+        let memory_types = self.adapter.physical_device.memory_properties().memory_types;
+
+        // TODO: Are these deleted?
+        let (screenshot_buffer, screenshot_memory) = utils::empty_buffer::<u8>(
+            &self.device,
+            &memory_types,
+            Properties::CPU_VISIBLE,
+            buffer::Usage::TRANSFER_DST,
+            memory_size as usize,
+        );
+
+        let width = footprint.row_pitch as u32 / 4;
+        let height = memory_size as u32 / footprint.row_pitch as u32;
+
+        let submit = {
+            let mut cmd_buffer = self.command_pool.acquire_command_buffer(false);
+
+            cmd_buffer.copy_image_to_buffer(
+                image,
+                Layout::TransferSrcOptimal,
+                &screenshot_buffer,
+                &[BufferImageCopy {
+                    buffer_offset: 0,
+                    buffer_width: width,
+                    buffer_height: height,
+                    image_layers: SubresourceLayers {
+                        aspects: Aspects::COLOR,
+                        level: 0,
+                        layers: 0..1,
+                    },
+                    image_offset: Offset { x: 0, y: 0, z: 0 },
+                    image_extent: Extent {
+                        width,
+                        height,
+                        depth: 1,
+                    },
+                }],
+                );
+
+            cmd_buffer.finish()
+        };
+
+        let submission = Submission::new().submit(Some(submit));
+        self.queue_group.queues[0].submit(submission, Some(&self.texture_fence));
+
+        self.device.wait_for_fence(&self.texture_fence, !0).unwrap();
+
+        {
+            let data = self.device
+                .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
+                .expect("acquire_mapping_reader failed");
+
+            let mut image_bytes: Vec<u8> = data.to_owned();
+
+            if swizzle {
+                for chunk in image_bytes.chunks_mut(4) {
+                    let (r, rest) = chunk.split_first_mut().unwrap();
+                    std::mem::swap(r, &mut rest[1]);
+                }
+            }
+
+            image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8))
+                .unwrap();
+
+            self.device.release_mapping_reader(data);
+        }
     }
 }
 
@@ -1107,3 +1209,4 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
         [dx, dy, 0.0, 1.0],
     ]
 }
+

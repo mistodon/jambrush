@@ -15,7 +15,7 @@ fn main() {
         .unwrap();
 
     let mut jambrush = jambrush::JamBrushSystem::new(&window, &jambrush::JamBrushConfig {
-        canvas_resolution: Some([256, 144]),
+        canvas_resolution: Some([256, 144]), // TODO: canvas_size ?
         max_texture_atlas_size: Some(1024),
         logging: true,
         debugging: true,
