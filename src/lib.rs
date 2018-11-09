@@ -844,6 +844,7 @@ pub struct JamBrushRenderer<'a> {
     sprites: Vec<(f32, SpritePushConstants)>,
     glyphs: Vec<(f32, Glyph)>,
     finished: bool,
+    camera: [f32; 2],
 }
 
 impl<'a> JamBrushRenderer<'a> {
@@ -953,7 +954,16 @@ impl<'a> JamBrushRenderer<'a> {
             sprites: vec![],
             glyphs: vec![],
             finished: false,
+            camera: [0.0, 0.0],
         }
+    }
+
+    pub fn camera(&mut self, camera: [f32; 2]) {
+        self.camera = camera;
+    }
+
+    pub fn clear_camera(&mut self) {
+        self.camera([0.0, 0.0]);
     }
 
     pub fn sprite(&mut self, sprite: &Sprite, pos: [f32; 2], depth: f32) {
@@ -967,8 +977,11 @@ impl<'a> JamBrushRenderer<'a> {
         let u0 = uv_origin[0] + uw * sprite.sub_uv_offset[0];
         let v0 = uv_origin[1] + uh * sprite.sub_uv_offset[1];
 
+        let [pos_x, pos_y] = pos;
+        let [cam_x, cam_y] = self.camera;
+
         let data = SpritePushConstants {
-            transform: make_transform(pos, [px*sx, py*sy], [res_x as f32, res_y as f32]),
+            transform: make_transform([pos_x - cam_x, pos_y - cam_y], [px*sx, py*sy], [res_x as f32, res_y as f32]),
             tint: [1.0, 1.0, 1.0, 1.0],
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
@@ -991,14 +1004,16 @@ impl<'a> JamBrushRenderer<'a> {
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
         // TODO: copyin' a lotta glyphs here!
 
+        let [cam_x, cam_y] = self.camera;
+
         let font_id = font.id;
         let font = &self.draw_system.fonts[font_id];
         let glyphs = font.layout(
             text,
             Scale { x: size, y: size },
             Point {
-                x: pos[0],
-                y: pos[1],
+                x: pos[0] - cam_x,
+                y: pos[1] - cam_y,
             },
         );
 
