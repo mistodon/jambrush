@@ -9,6 +9,7 @@ Debugging tools!
 - [ ] Output screen capture
 - [ ] Output texture atlas
     - [ ] Optionally with red outlines
+- [ ] Builder pattern for Renderer properties? (clear color, camera, etc.)
 
 Ergonomics:
 
