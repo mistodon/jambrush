@@ -10,11 +10,16 @@ fn main() {
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
         .with_title("JamBrush - Happy path")
-        .with_dimensions((1280, 720).into())
+        .with_dimensions((800, 450).into())
         .build(&events_loop)
         .unwrap();
 
-    let mut jambrush = jambrush::JamBrushSystem::new(&window, (256, 144));
+    let mut jambrush = jambrush::JamBrushSystem::new(&window, &jambrush::JamBrushConfig {
+        canvas_resolution: Some([256, 144]),
+        max_texture_atlas_size: Some(1024),
+        logging: true,
+        debugging: true,
+    });
 
     let ship_sprite = {
         let image_bytes = std::fs::read(concat!(
