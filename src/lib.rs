@@ -984,6 +984,12 @@ impl<'a> JamBrushRenderer<'a> {
         self.camera([0.0, 0.0]);
     }
 
+    pub fn center_camera(&mut self, on: [f32; 2]) {
+        let [rx, ry] = self.draw_system.resolution;
+        let [x, y] = on;
+        self.camera([x - rx as f32 / 2.0, y - ry as f32 / 2.0]);
+    }
+
     pub fn sprite(&mut self, sprite: &Sprite, pos: [f32; 2], depth: f32) {
         let (uv_origin, uv_scale, pixel_scale) = self.draw_system.sprite_regions[sprite.id];
         let [res_x, res_y] = self.draw_system.resolution;
