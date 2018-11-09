@@ -151,7 +151,6 @@ pub struct JamBrushSystem {
 
 impl JamBrushSystem {
     pub fn new(window: &Window, config: &JamBrushConfig) -> Self {
-
         let resolution = config.canvas_resolution.unwrap_or_else(|| {
             let (window_w, window_h) = window.get_inner_size().unwrap().into();
             [window_w, window_h]
@@ -370,10 +369,16 @@ impl JamBrushSystem {
 
         let limits = adapter.physical_device.limits();
         let atlas_size_limit = limits.max_texture_size as u32;
-        let atlas_size = config.max_texture_atlas_size.unwrap_or(atlas_size_limit).min(atlas_size_limit);
+        let atlas_size = config
+            .max_texture_atlas_size
+            .unwrap_or(atlas_size_limit)
+            .min(atlas_size_limit);
 
         if logging {
-            println!("  Texture atlas dimensions: {} x {}", atlas_size, atlas_size);
+            println!(
+                "  Texture atlas dimensions: {} x {}",
+                atlas_size, atlas_size
+            );
         }
 
         let atlas_image = DynamicImage::new_rgba8(atlas_size, atlas_size).to_rgba();
@@ -615,7 +620,10 @@ impl JamBrushSystem {
         self.update_atlas();
 
         let (uv_origin, uv_size, _) = self.sprite_regions[sprite_index];
-        self.log(format!("  Sprite {} loaded: uv_origin: {:?},   uv_size: {:?}", sprite_index, uv_origin, uv_size));
+        self.log(format!(
+            "  Sprite {} loaded: uv_origin: {:?},   uv_size: {:?}",
+            sprite_index, uv_origin, uv_size
+        ));
 
         Sprite {
             id: sprite_index,
@@ -691,7 +699,10 @@ impl JamBrushSystem {
 
         let mut swap_config = SwapchainConfig::from_caps(&caps, self.surface_color_format);
 
-        self.log(format!("  Surface extent: {} x {}", swap_config.extent.width, swap_config.extent.height));
+        self.log(format!(
+            "  Surface extent: {} x {}",
+            swap_config.extent.width, swap_config.extent.height
+        ));
         self.log(format!("  DPI factor: {}", self.dpi_factor));
 
         swap_config.extent.width =
@@ -699,7 +710,10 @@ impl JamBrushSystem {
         swap_config.extent.height =
             (f64::from(swap_config.extent.height) * self.dpi_factor).round() as u32;
 
-        self.log(format!("  Swapchain dimensions: {} x {}", swap_config.extent.width, swap_config.extent.height));
+        self.log(format!(
+            "  Swapchain dimensions: {} x {}",
+            swap_config.extent.width, swap_config.extent.height
+        ));
 
         let extent = swap_config.extent.to_extent();
         let (swapchain, backbuffer) = self
@@ -767,7 +781,11 @@ impl JamBrushSystem {
             },
         );
         let memory_size = footprint.slice.end - footprint.slice.start;
-        let memory_types = self.adapter.physical_device.memory_properties().memory_types;
+        let memory_types = self
+            .adapter
+            .physical_device
+            .memory_properties()
+            .memory_types;
 
         // TODO: Are these deleted?
         let (screenshot_buffer, screenshot_memory) = utils::empty_buffer::<u8>(
@@ -804,7 +822,7 @@ impl JamBrushSystem {
                         depth: 1,
                     },
                 }],
-                );
+            );
 
             cmd_buffer.finish()
         };
@@ -815,7 +833,8 @@ impl JamBrushSystem {
         self.device.wait_for_fence(&self.texture_fence, !0).unwrap();
 
         {
-            let data = self.device
+            let data = self
+                .device
                 .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
                 .expect("acquire_mapping_reader failed");
 
@@ -828,8 +847,7 @@ impl JamBrushSystem {
                 }
             }
 
-            image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8))
-                .unwrap();
+            image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8)).unwrap();
 
             self.device.release_mapping_reader(data);
         }
@@ -981,7 +999,11 @@ impl<'a> JamBrushRenderer<'a> {
         let [cam_x, cam_y] = self.camera;
 
         let data = SpritePushConstants {
-            transform: make_transform([pos_x - cam_x, pos_y - cam_y], [px*sx, py*sy], [res_x as f32, res_y as f32]),
+            transform: make_transform(
+                [pos_x - cam_x, pos_y - cam_y],
+                [px * sx, py * sy],
+                [res_x as f32, res_y as f32],
+            ),
             tint: [1.0, 1.0, 1.0, 1.0],
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
@@ -1224,4 +1246,3 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
         [dx, dy, 0.0, 1.0],
     ]
 }
-
