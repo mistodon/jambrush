@@ -28,7 +28,8 @@ fn main() {
         let image_bytes = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/examples/wee_ship.png"
-        )).unwrap();
+        ))
+        .unwrap();
 
         let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
         let (w, h) = image.dimensions();

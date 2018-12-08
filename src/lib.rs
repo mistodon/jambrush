@@ -234,14 +234,16 @@ impl JamBrushSystem {
                     },
                 ],
                 &[],
-            ).unwrap();
+            )
+            .unwrap();
 
         let push_size = utils::push_constant_size::<SpritePushConstants>() as u32;
         let pipeline_layout = device
             .create_pipeline_layout(
                 vec![&set_layout],
                 &[(ShaderStageFlags::VERTEX, 0..push_size)],
-            ).unwrap();
+            )
+            .unwrap();
 
         let vertex_shader_module = {
             let spirv = include_bytes!(concat!(
@@ -316,7 +318,8 @@ impl JamBrushSystem {
                         count: 2,
                     },
                 ],
-            ).unwrap();
+            )
+            .unwrap();
 
         let sprites_desc_set = desc_pool.allocate_set(&set_layout).unwrap();
         let blit_desc_set = desc_pool.allocate_set(&set_layout).unwrap();
@@ -739,8 +742,10 @@ impl JamBrushSystem {
                                 self.surface_color_format,
                                 Swizzle::NO,
                                 color_range.clone(),
-                            ).unwrap()
-                    }).collect::<Vec<_>>();
+                            )
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>();
 
                 let fbos = image_views
                     .iter()
@@ -748,7 +753,8 @@ impl JamBrushSystem {
                         self.device
                             .create_framebuffer(&self.render_pass, vec![image_view], extent)
                             .unwrap()
-                    }).collect();
+                    })
+                    .collect();
 
                 (images, image_views, fbos)
             }
@@ -1086,7 +1092,8 @@ impl<'a> JamBrushRenderer<'a> {
 
                     let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
                     font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
-                }).unwrap();
+                })
+                .unwrap();
         }
 
         // TODO: Use a separate font texture, in a texture array
@@ -1203,14 +1210,16 @@ impl<'a> JamBrushRenderer<'a> {
             .wait_on(&[(
                 &self.draw_system.frame_semaphore,
                 PipelineStage::BOTTOM_OF_PIPE,
-            )]).signal(&[&self.draw_system.scene_semaphore])
+            )])
+            .signal(&[&self.draw_system.scene_semaphore])
             .submit(vec![scene_command_buffer]);
 
         let blit_submission = Submission::new()
             .wait_on(&[(
                 &self.draw_system.scene_semaphore,
                 PipelineStage::BOTTOM_OF_PIPE,
-            )]).signal(&[&self.draw_system.present_semaphore])
+            )])
+            .signal(&[&self.draw_system.present_semaphore])
             .submit(vec![self.blit_command_buffer.take().unwrap()]);
 
         self.draw_system.queue_group.queues[0].submit(scene_submission, None);
