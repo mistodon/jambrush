@@ -85,7 +85,8 @@ pub mod utils {
             .enumerate()
             .position(|(id, ty)| {
                 req.type_mask & (1 << id) != 0 && ty.properties.contains(properties)
-            }).unwrap()
+            })
+            .unwrap()
             .into();
 
         let buffer_memory = device.allocate_memory(upload_type, req.size).unwrap();
@@ -141,7 +142,8 @@ pub mod utils {
                 img::Tiling::Optimal,
                 usage,
                 ViewCapabilities::empty(),
-            ).expect("Failed to create unbound image");
+            )
+            .expect("Failed to create unbound image");
 
         let image_req = device.get_image_requirements(&unbound_image);
 
@@ -151,7 +153,8 @@ pub mod utils {
             .position(|(id, memory_type)| {
                 image_req.type_mask & (1 << id) != 0
                     && memory_type.properties.contains(Properties::DEVICE_LOCAL)
-            }).unwrap()
+            })
+            .unwrap()
             .into();
 
         let image_memory = device
@@ -173,7 +176,8 @@ pub mod utils {
                     levels: 0..1,
                     layers: 0..1,
                 },
-            ).expect("Failed to create image view");
+            )
+            .expect("Failed to create image view");
 
         (image, image_memory, image_view)
     }
@@ -211,7 +215,7 @@ pub mod utils {
 
             for y in 0..height as usize {
                 let row = &(**src_image)[y * (width as usize) * image_stride
-                                             ..(y + 1) * (width as usize) * image_stride];
+                    ..(y + 1) * (width as usize) * image_stride];
                 let dest_base = y * row_pitch as usize;
                 data[dest_base..dest_base + row.len()].copy_from_slice(row);
             }
