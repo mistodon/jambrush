@@ -1,10 +1,3 @@
-extern crate gfx_backend_metal as backend;
-extern crate gfx_hal;
-extern crate image;
-extern crate rusttype;
-extern crate texture_packer;
-extern crate winit;
-
 mod gfxutils;
 
 use std::path::Path;
@@ -14,7 +7,7 @@ use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
 use texture_packer::TexturePacker;
 use winit::Window;
 
-use gfxutils::*;
+use crate::gfxutils::*;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
