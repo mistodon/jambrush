@@ -2,6 +2,7 @@
 name = "jambrush"
 version = "0.1.0"
 authors = ["***Realname*** ***Lastname*** <***redacted.email@redacted.nope***>"]
+edition = "2018"
 
 [dependencies]
 image = "~0.20.0"
@@ -11,8 +12,9 @@ winit = "~0.17.2"
 [dependencies.gfx-hal]
 git = "https://github.com/gfx-rs/gfx"
 
-[dependencies.gfx-backend-metal]
+[dependencies.backend]
 git = "https://github.com/gfx-rs/gfx"
+package = "gfx-backend-metal"
 
 [dependencies.rusttype]
 version = "~0.7.2"
