@@ -989,43 +989,48 @@ impl<'a> JamBrushRenderer<'a> {
         self.camera([x - rx as f32 / 2.0, y - ry as f32 / 2.0]);
     }
 
-    pub fn sprite(&mut self, sprite: &Sprite, pos: [f32; 2], depth: f32) {
+    pub fn sprite<T: Into<SpriteArgs>>(&mut self, sprite: &Sprite, args: T) {
+        let args = args.into();
+        self.sprite_with(sprite, &args);
+    }
+
+    pub fn sprite_with(&mut self, sprite: &Sprite, args: &SpriteArgs) {
         let (uv_origin, uv_scale, pixel_scale) = self.draw_system.sprite_regions[sprite.id];
         let [res_x, res_y] = self.draw_system.resolution;
 
         let [px, py] = pixel_scale;
         let [sx, sy] = sprite.sub_uv_scale;
+
+        let scale = args.size.unwrap_or([px * sx, py * sy]);
+
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
         let u0 = uv_origin[0] + uw * sprite.sub_uv_offset[0];
         let v0 = uv_origin[1] + uh * sprite.sub_uv_offset[1];
 
-        let [pos_x, pos_y] = pos;
+        let [pos_x, pos_y] = args.pos;
         let [cam_x, cam_y] = self.camera;
 
         let data = SpritePushConstants {
             transform: make_transform(
                 [pos_x - cam_x, pos_y - cam_y],
-                [px * sx, py * sy],
+                scale,
                 [res_x as f32, res_y as f32],
             ),
-            tint: [1.0, 1.0, 1.0, 1.0],
+            tint: args.tint,
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
         };
 
-        self.sprites.push((depth, data));
+        self.sprites.push((args.depth, data));
     }
 
-    pub fn text(
-        &mut self,
-        font: &Font,
-        text: &str,
-        pos: [f32; 2],
-        size: f32,
-        tint: [f32; 4],
-        depth: f32,
-    ) {
+    pub fn text<T: Into<TextArgs>>(&mut self, font: &Font, text: &str, args: T) {
+        let args = args.into();
+        self.text_with(font, text, &args);
+    }
+
+    pub fn text_with(&mut self, font: &Font, text: &str, args: &TextArgs) {
         use rusttype::{Point, Scale};
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
@@ -1037,10 +1042,10 @@ impl<'a> JamBrushRenderer<'a> {
         let font = &self.draw_system.fonts[font_id];
         let glyphs = font.layout(
             text,
-            Scale { x: size, y: size },
+            Scale { x: args.size, y: args.size },
             Point {
-                x: pos[0] - cam_x,
-                y: pos[1] - cam_y,
+                x: args.pos[0] - cam_x,
+                y: args.pos[1] - cam_y,
             },
         );
 
@@ -1050,10 +1055,10 @@ impl<'a> JamBrushRenderer<'a> {
                 .glyph_cache
                 .queue_glyph(font_id, glyph.clone());
             self.glyphs.push((
-                depth,
+                args.depth,
                 Glyph {
                     glyph,
-                    tint,
+                    tint: args.tint,
                     font_id,
                 },
             ));
@@ -1253,4 +1258,120 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
         [0.0, 0.0, 1.0, 0.0],
         [dx, dy, 0.0, 1.0],
     ]
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpriteArgs {
+    pub pos: [f32; 2],
+    pub depth: f32,
+    pub size: Option<[f32; 2]>,
+    pub tint: [f32; 4],
+}
+
+impl Default for SpriteArgs {
+    fn default() -> Self {
+        SpriteArgs {
+            pos: [0.0, 0.0],
+            size: None,
+            depth: 0.0,
+            tint: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+
+impl From<[f32; 2]> for SpriteArgs {
+    fn from(pos: [f32; 2]) -> Self {
+        SpriteArgs {
+            pos,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32)> for SpriteArgs {
+    fn from((pos, depth): ([f32; 2], f32)) -> Self {
+        SpriteArgs {
+            pos,
+            depth,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32, [f32; 2])> for SpriteArgs {
+    fn from((pos, depth, size): ([f32; 2], f32, [f32; 2])) -> Self {
+        SpriteArgs {
+            pos,
+            depth,
+            size: Some(size),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32, [f32; 2], [f32; 4])> for SpriteArgs {
+    fn from((pos, depth, size, tint): ([f32; 2], f32, [f32; 2], [f32; 4])) -> Self {
+        SpriteArgs {
+            pos,
+            depth,
+            size: Some(size),
+            tint,
+            ..Default::default()
+        }
+    }
+}
+
+// TODO: Confusing how depth/size are in a different order between sprite/text
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextArgs {
+    pub pos: [f32; 2],
+    pub size: f32,
+    pub depth: f32,
+    pub tint: [f32; 4],
+}
+
+impl Default for TextArgs {
+    fn default() -> Self {
+        TextArgs {
+            pos: [0.0, 0.0],
+            size: 0.0,
+            depth: 0.0,
+            tint: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+
+impl From<([f32; 2], f32)> for TextArgs {
+    fn from((pos, size): ([f32; 2], f32)) -> Self {
+        TextArgs {
+            pos,
+            size,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32, f32)> for TextArgs {
+    fn from((pos, size, depth): ([f32; 2], f32, f32)) -> Self {
+        TextArgs {
+            pos,
+            size,
+            depth,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32, f32, [f32; 4])> for TextArgs {
+    fn from((pos, size, depth, tint): ([f32; 2], f32, f32, [f32; 4])) -> Self {
+        TextArgs {
+            pos,
+            size,
+            depth,
+            tint,
+            ..Default::default()
+        }
+    }
 }
