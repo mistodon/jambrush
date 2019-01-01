@@ -549,8 +549,8 @@ impl JamBrushSystem {
         &mut self,
         canvas_clear_color: [f32; 4],
         border_clear_color: Option<[f32; 4]>,
-    ) -> JamBrushRenderer {
-        JamBrushRenderer::new(
+    ) -> Renderer {
+        Renderer::new(
             self,
             canvas_clear_color,
             border_clear_color.unwrap_or(canvas_clear_color),
@@ -568,17 +568,16 @@ impl JamBrushSystem {
 
     pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
         let image_bytes = std::fs::read(path.as_ref()).unwrap();
-        let sprite_img = image::load_from_memory(&image_bytes).unwrap().to_rgba();
-        let (w, h) = sprite_img.dimensions();
 
-        self.load_sprite([w, h], &sprite_img)
+        self.load_sprite(&image_bytes)
     }
 
-    pub fn load_sprite(&mut self, size: [u32; 2], data: &[u8]) -> Sprite {
+    pub fn load_sprite_rgba(&mut self, size: [u32; 2], rgba_bytes: &[u8]) -> Sprite {
         use texture_packer::TexturePackerConfig;
 
         let sprite_index = self.sprite_textures.len();
-        let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], data.to_owned()).unwrap();
+        let sprite_img: RgbaImage =
+            RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned()).unwrap();
         self.sprite_textures.push(sprite_img);
 
         let (aw, ah) = self.atlas_image.dimensions();
@@ -626,6 +625,13 @@ impl JamBrushSystem {
             sub_uv_scale: [1.0, 1.0],
             sub_uv_offset: [0.0, 0.0],
         }
+    }
+
+    pub fn load_sprite(&mut self, image_bytes: &[u8]) -> Sprite {
+        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let (w, h) = image.dimensions();
+
+        self.load_sprite_rgba([w, h], &image)
     }
 
     pub fn load_font_file<P: AsRef<Path>>(&mut self, path: P) -> Font {
@@ -853,7 +859,7 @@ impl JamBrushSystem {
     }
 }
 
-pub struct JamBrushRenderer<'a> {
+pub struct Renderer<'a> {
     draw_system: &'a mut JamBrushSystem,
     canvas_clear_color: [f32; 4],
     frame_index: SwapImageIndex,
@@ -864,7 +870,7 @@ pub struct JamBrushRenderer<'a> {
     camera: [f32; 2],
 }
 
-impl<'a> JamBrushRenderer<'a> {
+impl<'a> Renderer<'a> {
     fn new(
         draw_system: &'a mut JamBrushSystem,
         canvas_clear_color: [f32; 4],
@@ -963,7 +969,7 @@ impl<'a> JamBrushRenderer<'a> {
             };
         }
 
-        JamBrushRenderer {
+        Renderer {
             draw_system,
             canvas_clear_color,
             frame_index,
@@ -1042,7 +1048,10 @@ impl<'a> JamBrushRenderer<'a> {
         let font = &self.draw_system.fonts[font_id];
         let glyphs = font.layout(
             text,
-            Scale { x: args.size, y: args.size },
+            Scale {
+                x: args.size,
+                y: args.size,
+            },
             Point {
                 x: args.pos[0] - cam_x,
                 y: args.pos[1] - cam_y,
@@ -1237,10 +1246,10 @@ impl<'a> JamBrushRenderer<'a> {
     }
 }
 
-impl<'a> Drop for JamBrushRenderer<'a> {
+impl<'a> Drop for Renderer<'a> {
     fn drop(&mut self) {
         if !self.finished {
-            panic!("JamBrushRenderer dropped without calling `finish()`");
+            panic!("Renderer dropped without calling `finish()`");
         }
     }
 }
@@ -1322,7 +1331,6 @@ impl From<([f32; 2], f32, [f32; 2], [f32; 4])> for SpriteArgs {
 }
 
 // TODO: Confusing how depth/size are in a different order between sprite/text
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextArgs {
