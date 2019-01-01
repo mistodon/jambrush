@@ -79,7 +79,7 @@ impl Drop for DropAlarm {
 
 #[derive(Debug, Default, Clone)]
 pub struct JamBrushConfig {
-    pub canvas_resolution: Option<[u32; 2]>,
+    pub canvas_size: Option<[u32; 2]>,
     pub max_texture_atlas_size: Option<u32>,
     pub logging: bool,
     pub debugging: bool,
@@ -144,7 +144,7 @@ pub struct JamBrushSystem {
 
 impl JamBrushSystem {
     pub fn new(window: &Window, config: &JamBrushConfig) -> Self {
-        let resolution = config.canvas_resolution.unwrap_or_else(|| {
+        let resolution = config.canvas_size.unwrap_or_else(|| {
             let (window_w, window_h) = window.get_inner_size().unwrap().into();
             [window_w, window_h]
         });
@@ -325,7 +325,7 @@ impl JamBrushSystem {
         let memory_types = adapter.physical_device.memory_properties().memory_types;
 
         if logging {
-            println!("  Canvas resolution: {} x {}", resolution[0], resolution[1]);
+            println!("  Canvas size: {} x {}", resolution[0], resolution[1]);
         }
 
         let (rtt_image, rtt_memory, rtt_view, rtt_sampler, rtt_framebuffer) = {
@@ -1031,12 +1031,12 @@ impl<'a> Renderer<'a> {
         self.sprites.push((args.depth, data));
     }
 
-    pub fn text<T: Into<TextArgs>>(&mut self, font: &Font, text: &str, args: T) {
+    pub fn text<T: Into<TextArgs>>(&mut self, font: &Font, size: f32, text: &str, args: T) {
         let args = args.into();
-        self.text_with(font, text, &args);
+        self.text_with(font, size, text, &args);
     }
 
-    pub fn text_with(&mut self, font: &Font, text: &str, args: &TextArgs) {
+    pub fn text_with(&mut self, font: &Font, size: f32, text: &str, args: &TextArgs) {
         use rusttype::{Point, Scale};
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
@@ -1049,8 +1049,8 @@ impl<'a> Renderer<'a> {
         let glyphs = font.layout(
             text,
             Scale {
-                x: args.size,
-                y: args.size,
+                x: size,
+                y: size,
             },
             Point {
                 x: args.pos[0] - cam_x,
@@ -1330,12 +1330,9 @@ impl From<([f32; 2], f32, [f32; 2], [f32; 4])> for SpriteArgs {
     }
 }
 
-// TODO: Confusing how depth/size are in a different order between sprite/text
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextArgs {
     pub pos: [f32; 2],
-    pub size: f32,
     pub depth: f32,
     pub tint: [f32; 4],
 }
@@ -1344,39 +1341,35 @@ impl Default for TextArgs {
     fn default() -> Self {
         TextArgs {
             pos: [0.0, 0.0],
-            size: 0.0,
             depth: 0.0,
             tint: [1.0, 1.0, 1.0, 1.0],
         }
     }
 }
 
-impl From<([f32; 2], f32)> for TextArgs {
-    fn from((pos, size): ([f32; 2], f32)) -> Self {
+impl From<[f32; 2]> for TextArgs {
+    fn from(pos: [f32; 2]) -> Self {
         TextArgs {
             pos,
-            size,
             ..Default::default()
         }
     }
 }
 
-impl From<([f32; 2], f32, f32)> for TextArgs {
-    fn from((pos, size, depth): ([f32; 2], f32, f32)) -> Self {
+impl From<([f32; 2], f32)> for TextArgs {
+    fn from((pos, depth): ([f32; 2], f32)) -> Self {
         TextArgs {
             pos,
-            size,
             depth,
             ..Default::default()
         }
     }
 }
 
-impl From<([f32; 2], f32, f32, [f32; 4])> for TextArgs {
-    fn from((pos, size, depth, tint): ([f32; 2], f32, f32, [f32; 4])) -> Self {
+impl From<([f32; 2], f32, [f32; 4])> for TextArgs {
+    fn from((pos, depth, tint): ([f32; 2], f32, [f32; 4])) -> Self {
         TextArgs {
             pos,
-            size,
             depth,
             tint,
             ..Default::default()
