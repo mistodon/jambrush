@@ -156,17 +156,19 @@ impl JamBrushSystem {
         }
 
         let _instance = backend::Instance::create("JamBrush", 1);
-        let surface = _instance.create_surface(&window);
+        let surface = _instance.create_surface(window);
         let adapter = _instance.enumerate_adapters().remove(0);
         let (device, queue_group) = adapter
             .open_with::<_, Graphics>(1, |family| surface.supports_queue_family(family))
             .unwrap();
 
-        let command_pool = device
-            .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty(), 16)
-            .unwrap();
+        let command_pool = unsafe {
+            device
+                .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty())
+                .unwrap()
+        };
 
-        let (_caps, formats, _) = surface.compatibility(&adapter.physical_device);
+        let (_caps, formats, _, _) = surface.compatibility(&adapter.physical_device);
 
         let surface_color_format = {
             match formats {
@@ -178,7 +180,7 @@ impl JamBrushSystem {
             }
         };
 
-        let render_pass = {
+        let render_pass = unsafe {
             let color_attachment = Attachment {
                 format: Some(surface_color_format),
                 samples: 1,
@@ -208,37 +210,41 @@ impl JamBrushSystem {
                 .unwrap()
         };
 
-        let set_layout = device
-            .create_descriptor_set_layout(
-                &[
-                    DescriptorSetLayoutBinding {
-                        binding: 0,
-                        ty: DescriptorType::SampledImage,
-                        count: 1,
-                        stage_flags: ShaderStageFlags::FRAGMENT,
-                        immutable_samplers: false,
-                    },
-                    DescriptorSetLayoutBinding {
-                        binding: 1,
-                        ty: DescriptorType::Sampler,
-                        count: 1,
-                        stage_flags: ShaderStageFlags::FRAGMENT,
-                        immutable_samplers: false,
-                    },
-                ],
-                &[],
-            )
-            .unwrap();
+        let set_layout = unsafe {
+            device
+                .create_descriptor_set_layout(
+                    &[
+                        DescriptorSetLayoutBinding {
+                            binding: 0,
+                            ty: DescriptorType::SampledImage,
+                            count: 1,
+                            stage_flags: ShaderStageFlags::FRAGMENT,
+                            immutable_samplers: false,
+                        },
+                        DescriptorSetLayoutBinding {
+                            binding: 1,
+                            ty: DescriptorType::Sampler,
+                            count: 1,
+                            stage_flags: ShaderStageFlags::FRAGMENT,
+                            immutable_samplers: false,
+                        },
+                    ],
+                    &[],
+                )
+                .unwrap()
+        };
 
         let push_size = utils::push_constant_size::<SpritePushConstants>() as u32;
-        let pipeline_layout = device
-            .create_pipeline_layout(
-                vec![&set_layout],
-                &[(ShaderStageFlags::VERTEX, 0..push_size)],
-            )
-            .unwrap();
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(
+                    vec![&set_layout],
+                    &[(ShaderStageFlags::VERTEX, 0..push_size)],
+                )
+                .unwrap()
+        };
 
-        let vertex_shader_module = {
+        let vertex_shader_module = unsafe {
             let spirv = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.vert.spv"
@@ -246,7 +252,7 @@ impl JamBrushSystem {
             device.create_shader_module(spirv).unwrap()
         };
 
-        let fragment_shader_module = {
+        let fragment_shader_module = unsafe {
             let spirv = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.frag.spv"
@@ -254,7 +260,7 @@ impl JamBrushSystem {
             device.create_shader_module(spirv).unwrap()
         };
 
-        let pipeline = {
+        let pipeline = unsafe {
             let vs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
                 module: &vertex_shader_module,
@@ -298,24 +304,26 @@ impl JamBrushSystem {
                 .expect("create_graphics_pipeline failed")
         };
 
-        let mut desc_pool = device
-            .create_descriptor_pool(
-                2,
-                &[
-                    DescriptorRangeDesc {
-                        ty: DescriptorType::SampledImage,
-                        count: 2,
-                    },
-                    DescriptorRangeDesc {
-                        ty: DescriptorType::Sampler,
-                        count: 2,
-                    },
-                ],
-            )
-            .unwrap();
+        let mut desc_pool = unsafe {
+            device
+                .create_descriptor_pool(
+                    2,
+                    &[
+                        DescriptorRangeDesc {
+                            ty: DescriptorType::SampledImage,
+                            count: 2,
+                        },
+                        DescriptorRangeDesc {
+                            ty: DescriptorType::Sampler,
+                            count: 2,
+                        },
+                    ],
+                )
+                .unwrap()
+        };
 
-        let sprites_desc_set = desc_pool.allocate_set(&set_layout).unwrap();
-        let blit_desc_set = desc_pool.allocate_set(&set_layout).unwrap();
+        let sprites_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
+        let blit_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
 
         let texture_semaphore = device.create_semaphore().unwrap();
         let scene_semaphore = device.create_semaphore().unwrap();
@@ -328,7 +336,7 @@ impl JamBrushSystem {
             println!("  Canvas size: {} x {}", resolution[0], resolution[1]);
         }
 
-        let (rtt_image, rtt_memory, rtt_view, rtt_sampler, rtt_framebuffer) = {
+        let (rtt_image, rtt_memory, rtt_view, rtt_sampler, rtt_framebuffer) = unsafe {
             let [width, height] = resolution;
             let extent = Extent {
                 width,
@@ -381,7 +389,7 @@ impl JamBrushSystem {
 
         let texture_fence = device.create_fence(false).unwrap();
 
-        let (atlas_texture, atlas_memory, atlas_view, atlas_sampler) = {
+        let (atlas_texture, atlas_memory, atlas_view, atlas_sampler) = unsafe {
             let (texture_image, texture_memory, texture_view) = utils::create_image(
                 &device,
                 &memory_types,
@@ -409,35 +417,37 @@ impl JamBrushSystem {
             .multithread(true)
             .build();
 
-        device.write_descriptor_sets(vec![
-            DescriptorSetWrite {
-                set: &blit_desc_set,
-                binding: 0,
-                array_offset: 0,
-                descriptors: Some(Descriptor::Image(&rtt_view, Layout::Undefined)),
-            },
-            DescriptorSetWrite {
-                set: &blit_desc_set,
-                binding: 1,
-                array_offset: 0,
-                descriptors: Some(Descriptor::Sampler(&rtt_sampler)),
-            },
-        ]);
+        unsafe {
+            device.write_descriptor_sets(vec![
+                DescriptorSetWrite {
+                    set: &blit_desc_set,
+                    binding: 0,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Image(&rtt_view, Layout::Undefined)),
+                },
+                DescriptorSetWrite {
+                    set: &blit_desc_set,
+                    binding: 1,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Sampler(&rtt_sampler)),
+                },
+            ]);
 
-        device.write_descriptor_sets(vec![
-            DescriptorSetWrite {
-                set: &sprites_desc_set,
-                binding: 0,
-                array_offset: 0,
-                descriptors: Some(Descriptor::Image(&atlas_view, Layout::Undefined)),
-            },
-            DescriptorSetWrite {
-                set: &sprites_desc_set,
-                binding: 1,
-                array_offset: 0,
-                descriptors: Some(Descriptor::Sampler(&atlas_sampler)),
-            },
-        ]);
+            device.write_descriptor_sets(vec![
+                DescriptorSetWrite {
+                    set: &sprites_desc_set,
+                    binding: 0,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Image(&atlas_view, Layout::Undefined)),
+                },
+                DescriptorSetWrite {
+                    set: &sprites_desc_set,
+                    binding: 1,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Sampler(&atlas_sampler)),
+                },
+            ]);
+        }
 
         let swapchain = None;
 
@@ -517,26 +527,28 @@ impl JamBrushSystem {
             ..
         } = self;
 
-        device.destroy_sampler(atlas_sampler);
-        device.destroy_image_view(atlas_view);
-        device.free_memory(atlas_memory);
-        device.destroy_image(atlas_texture);
-        device.destroy_fence(texture_fence);
-        device.destroy_framebuffer(rtt_framebuffer);
-        device.destroy_sampler(rtt_sampler);
-        device.destroy_image_view(rtt_view);
-        device.free_memory(rtt_memory);
-        device.destroy_image(rtt_image);
-        device.destroy_semaphore(present_semaphore);
-        device.destroy_semaphore(frame_semaphore);
-        device.destroy_semaphore(scene_semaphore);
-        device.destroy_semaphore(texture_semaphore);
-        device.destroy_descriptor_pool(desc_pool);
-        device.destroy_graphics_pipeline(pipeline);
-        device.destroy_pipeline_layout(pipeline_layout);
-        device.destroy_descriptor_set_layout(set_layout);
-        device.destroy_command_pool(command_pool.into_raw());
-        device.destroy_render_pass(render_pass);
+        unsafe {
+            device.destroy_sampler(atlas_sampler);
+            device.destroy_image_view(atlas_view);
+            device.free_memory(atlas_memory);
+            device.destroy_image(atlas_texture);
+            device.destroy_fence(texture_fence);
+            device.destroy_framebuffer(rtt_framebuffer);
+            device.destroy_sampler(rtt_sampler);
+            device.destroy_image_view(rtt_view);
+            device.free_memory(rtt_memory);
+            device.destroy_image(rtt_image);
+            device.destroy_semaphore(present_semaphore);
+            device.destroy_semaphore(frame_semaphore);
+            device.destroy_semaphore(scene_semaphore);
+            device.destroy_semaphore(texture_semaphore);
+            device.destroy_descriptor_pool(desc_pool);
+            device.destroy_graphics_pipeline(pipeline);
+            device.destroy_pipeline_layout(pipeline_layout);
+            device.destroy_descriptor_set_layout(set_layout);
+            device.destroy_command_pool(command_pool.into_raw());
+            device.destroy_render_pass(render_pass);
+        }
     }
 
     fn log<S: AsRef<str>>(&self, message: S) {
@@ -652,15 +664,17 @@ impl JamBrushSystem {
     }
 
     fn update_atlas(&mut self) {
-        utils::upload_image_data(
-            &self.device,
-            &self.adapter.physical_device,
-            &mut self.command_pool,
-            &mut self.queue_group.queues[0],
-            &self.texture_fence,
-            &self.atlas_image,
-            &self.atlas_texture,
-        );
+        unsafe {
+            utils::upload_image_data(
+                &self.device,
+                &self.adapter.physical_device,
+                &mut self.command_pool,
+                &mut self.queue_group.queues[0],
+                &self.texture_fence,
+                &self.atlas_image,
+                &self.atlas_texture,
+            );
+        }
     }
 
     fn update_swapchain(&mut self) {
@@ -679,27 +693,36 @@ impl JamBrushSystem {
         let (swapchain, _extent, _frame_images, frame_views, framebuffers) =
             self.swapchain.take().unwrap();
 
-        self.device.wait_idle().unwrap();
-        self.command_pool.reset();
+        unsafe {
+            self.device.wait_idle().unwrap();
+            self.command_pool.reset();
 
-        for framebuffer in framebuffers {
-            self.device.destroy_framebuffer(framebuffer);
+            for framebuffer in framebuffers {
+                self.device.destroy_framebuffer(framebuffer);
+            }
+
+            for image_view in frame_views {
+                self.device.destroy_image_view(image_view);
+            }
+
+            self.device.destroy_swapchain(swapchain);
         }
-
-        for image_view in frame_views {
-            self.device.destroy_image_view(image_view);
-        }
-
-        self.device.destroy_swapchain(swapchain);
     }
 
     fn create_swapchain(&mut self) {
         self.log("Creating swapchain");
 
         self.swapchain_invalidated = false;
-        let (caps, _, _) = self.surface.compatibility(&self.adapter.physical_device);
+        let (caps, _, _, _) = self.surface.compatibility(&self.adapter.physical_device);
 
-        let mut swap_config = SwapchainConfig::from_caps(&caps, self.surface_color_format);
+        let mut swap_config = SwapchainConfig::from_caps(
+            &caps,
+            self.surface_color_format,
+            Extent2D {
+                width: self.resolution[0],
+                height: self.resolution[1],
+            },
+        );
 
         self.log(format!(
             "  Surface extent: {} x {}",
@@ -717,144 +740,148 @@ impl JamBrushSystem {
             swap_config.extent.width, swap_config.extent.height
         ));
 
-        let extent = swap_config.extent.to_extent();
-        let (swapchain, backbuffer) = self
-            .device
-            .create_swapchain(&mut self.surface, swap_config, None)
-            .unwrap();
+        unsafe {
+            let extent = swap_config.extent.to_extent();
+            let (swapchain, backbuffer) = self
+                .device
+                .create_swapchain(&mut self.surface, swap_config, None)
+                .unwrap();
 
-        let (frame_images, frame_views, framebuffers) = match backbuffer {
-            Backbuffer::Images(images) => {
-                let color_range = SubresourceRange {
-                    aspects: Aspects::COLOR,
-                    levels: 0..1,
-                    layers: 0..1,
-                };
+            let (frame_images, frame_views, framebuffers) = match backbuffer {
+                Backbuffer::Images(images) => {
+                    let color_range = SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: 0..1,
+                        layers: 0..1,
+                    };
 
-                let image_views = images
-                    .iter()
-                    .map(|image| {
-                        self.device
-                            .create_image_view(
-                                image,
-                                ViewKind::D2,
-                                self.surface_color_format,
-                                Swizzle::NO,
-                                color_range.clone(),
-                            )
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>();
+                    let image_views = images
+                        .iter()
+                        .map(|image| {
+                            self.device
+                                .create_image_view(
+                                    image,
+                                    ViewKind::D2,
+                                    self.surface_color_format,
+                                    Swizzle::NO,
+                                    color_range.clone(),
+                                )
+                                .unwrap()
+                        })
+                        .collect::<Vec<_>>();
 
-                let fbos = image_views
-                    .iter()
-                    .map(|image_view| {
-                        self.device
-                            .create_framebuffer(&self.render_pass, vec![image_view], extent)
-                            .unwrap()
-                    })
-                    .collect();
+                    let fbos = image_views
+                        .iter()
+                        .map(|image_view| {
+                            self.device
+                                .create_framebuffer(&self.render_pass, vec![image_view], extent)
+                                .unwrap()
+                        })
+                        .collect();
 
-                (images, image_views, fbos)
-            }
-            Backbuffer::Framebuffer(fbo) => (vec![], vec![], vec![fbo]),
-        };
+                    (images, image_views, fbos)
+                }
+                Backbuffer::Framebuffer(fbo) => (vec![], vec![], vec![fbo]),
+            };
 
-        self.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
+            self.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
+        }
     }
 
     pub fn capture_to_file<P: AsRef<Path>>(&mut self, capture_type: Capture, path: P) {
-        use image::ColorType;
+        unsafe {
+            use image::ColorType;
 
-        self.device.wait_idle().unwrap();
-        self.device.reset_fence(&self.texture_fence).unwrap();
+            self.device.wait_idle().unwrap();
+            self.device.reset_fence(&self.texture_fence).unwrap();
 
-        let swizzle = false;
-        let path = path.as_ref();
-        let image = match capture_type {
-            Capture::Window => unimplemented!(),
-            Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
-            Capture::TextureAtlas => &self.atlas_texture,
-        };
+            let swizzle = false;
+            let path = path.as_ref();
+            let image = match capture_type {
+                Capture::Window => unimplemented!(),
+                Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
+                Capture::TextureAtlas => &self.atlas_texture,
+            };
 
-        let footprint = self.device.get_image_subresource_footprint(
-            image,
-            Subresource {
-                aspects: Aspects::COLOR,
-                level: 0,
-                layer: 0,
-            },
-        );
-        let memory_size = footprint.slice.end - footprint.slice.start;
-        let memory_types = self
-            .adapter
-            .physical_device
-            .memory_properties()
-            .memory_types;
-
-        // TODO: Are these deleted?
-        let (screenshot_buffer, screenshot_memory) = utils::empty_buffer::<u8>(
-            &self.device,
-            &memory_types,
-            Properties::CPU_VISIBLE,
-            buffer::Usage::TRANSFER_DST,
-            memory_size as usize,
-        );
-
-        let width = footprint.row_pitch as u32 / 4;
-        let height = memory_size as u32 / footprint.row_pitch as u32;
-
-        let submit = {
-            let mut cmd_buffer = self.command_pool.acquire_command_buffer(false);
-
-            cmd_buffer.copy_image_to_buffer(
+            let footprint = self.device.get_image_subresource_footprint(
                 image,
-                Layout::TransferSrcOptimal,
-                &screenshot_buffer,
-                &[BufferImageCopy {
-                    buffer_offset: 0,
-                    buffer_width: width,
-                    buffer_height: height,
-                    image_layers: SubresourceLayers {
-                        aspects: Aspects::COLOR,
-                        level: 0,
-                        layers: 0..1,
-                    },
-                    image_offset: Offset { x: 0, y: 0, z: 0 },
-                    image_extent: Extent {
-                        width,
-                        height,
-                        depth: 1,
-                    },
-                }],
+                Subresource {
+                    aspects: Aspects::COLOR,
+                    level: 0,
+                    layer: 0,
+                },
+            );
+            let memory_size = footprint.slice.end - footprint.slice.start;
+            let memory_types = self
+                .adapter
+                .physical_device
+                .memory_properties()
+                .memory_types;
+
+            // TODO: Are these deleted?
+            let (screenshot_buffer, screenshot_memory) = utils::empty_buffer::<u8>(
+                &self.device,
+                &memory_types,
+                Properties::CPU_VISIBLE,
+                buffer::Usage::TRANSFER_DST,
+                memory_size as usize,
             );
 
-            cmd_buffer.finish()
-        };
+            let width = footprint.row_pitch as u32 / 4;
+            let height = memory_size as u32 / footprint.row_pitch as u32;
 
-        let submission = Submission::new().submit(Some(submit));
-        self.queue_group.queues[0].submit(submission, Some(&self.texture_fence));
+            let submit = {
+                let mut cmd_buffer = self.command_pool.acquire_command_buffer::<OneShot>();
 
-        self.device.wait_for_fence(&self.texture_fence, !0).unwrap();
+                cmd_buffer.copy_image_to_buffer(
+                    image,
+                    Layout::TransferSrcOptimal,
+                    &screenshot_buffer,
+                    &[BufferImageCopy {
+                        buffer_offset: 0,
+                        buffer_width: width,
+                        buffer_height: height,
+                        image_layers: SubresourceLayers {
+                            aspects: Aspects::COLOR,
+                            level: 0,
+                            layers: 0..1,
+                        },
+                        image_offset: Offset { x: 0, y: 0, z: 0 },
+                        image_extent: Extent {
+                            width,
+                            height,
+                            depth: 1,
+                        },
+                    }],
+                );
 
-        {
-            let data = self
-                .device
-                .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
-                .expect("acquire_mapping_reader failed");
+                cmd_buffer.finish();
+                cmd_buffer
+            };
 
-            let mut image_bytes: Vec<u8> = data.to_owned();
+            self.queue_group.queues[0].submit_nosemaphores(&[submit], Some(&self.texture_fence));
 
-            if swizzle {
-                for chunk in image_bytes.chunks_mut(4) {
-                    let (r, rest) = chunk.split_first_mut().unwrap();
-                    std::mem::swap(r, &mut rest[1]);
+            self.device.wait_for_fence(&self.texture_fence, !0).unwrap();
+
+            {
+                let data = self
+                    .device
+                    .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
+                    .expect("acquire_mapping_reader failed");
+
+                let mut image_bytes: Vec<u8> = data.to_owned();
+
+                if swizzle {
+                    for chunk in image_bytes.chunks_mut(4) {
+                        let (r, rest) = chunk.split_first_mut().unwrap();
+                        std::mem::swap(r, &mut rest[1]);
+                    }
                 }
+
+                image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8)).unwrap();
+
+                self.device.release_mapping_reader(data);
             }
-
-            image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8)).unwrap();
-
-            self.device.release_mapping_reader(data);
         }
     }
 }
@@ -863,7 +890,7 @@ pub struct Renderer<'a> {
     draw_system: &'a mut JamBrushSystem,
     canvas_clear_color: [f32; 4],
     frame_index: SwapImageIndex,
-    blit_command_buffer: Option<Submit<backend::Backend, Graphics, OneShot, Primary>>,
+    blit_command_buffer: Option<CommandBuffer<backend::Backend, Graphics, OneShot, Primary>>,
     sprites: Vec<(f32, SpritePushConstants)>,
     glyphs: Vec<(f32, Glyph)>,
     finished: bool,
@@ -876,13 +903,17 @@ impl<'a> Renderer<'a> {
         canvas_clear_color: [f32; 4],
         border_clear_color: [f32; 4],
     ) -> Self {
-        draw_system.update_swapchain();
-        draw_system.command_pool.reset();
+        unsafe {
+            // TODO: See next TODO
+            draw_system.update_swapchain();
+            draw_system.command_pool.reset();
+        }
 
         let frame_index: SwapImageIndex;
-        let blit_command_buffer: Submit<backend::Backend, Graphics, OneShot, Primary>;
+        let blit_command_buffer: CommandBuffer<backend::Backend, Graphics, OneShot, Primary>;
 
-        {
+        unsafe {
+            // TODO: Can we get rid of these empty scopes with NLL?
             let (swapchain, extent, _frame_images, _frame_views, framebuffers) =
                 draw_system.swapchain.as_mut().unwrap();
 
@@ -892,7 +923,7 @@ impl<'a> Renderer<'a> {
                 .unwrap();
 
             blit_command_buffer = {
-                let mut command_buffer = draw_system.command_pool.acquire_command_buffer(false);
+                let mut command_buffer = draw_system.command_pool.acquire_command_buffer();
 
                 let [vwidth, vheight] = draw_system.resolution;
 
@@ -965,7 +996,8 @@ impl<'a> Renderer<'a> {
                     encoder.draw(0..6, 0..1);
                 }
 
-                command_buffer.finish()
+                command_buffer.finish();
+                command_buffer
             };
         }
 
@@ -1048,10 +1080,7 @@ impl<'a> Renderer<'a> {
         let font = &self.draw_system.fonts[font_id];
         let glyphs = font.layout(
             text,
-            Scale {
-                x: size,
-                y: size,
-            },
+            Scale { x: size, y: size },
             Point {
                 x: args.pos[0] - cam_x,
                 y: args.pos[1] - cam_y,
@@ -1157,92 +1186,100 @@ impl<'a> Renderer<'a> {
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
 
-        let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
-            self.draw_system.swapchain.as_mut().unwrap();
+        unsafe {
+            let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
+                self.draw_system.swapchain.as_mut().unwrap();
 
-        let scene_command_buffer = {
-            let mut command_buffer = self.draw_system.command_pool.acquire_command_buffer(false);
+            let scene_command_buffer = {
+                let mut command_buffer = self
+                    .draw_system
+                    .command_pool
+                    .acquire_command_buffer::<OneShot>();
 
-            let [vwidth, vheight] = self.draw_system.resolution;
-            let viewport = Viewport {
-                rect: Rect {
-                    x: 0,
-                    y: 0,
-                    w: vwidth as i16,
-                    h: vheight as i16,
-                },
-                depth: 0.0..1.0,
-            };
+                let [vwidth, vheight] = self.draw_system.resolution;
+                let viewport = Viewport {
+                    rect: Rect {
+                        x: 0,
+                        y: 0,
+                        w: vwidth as i16,
+                        h: vheight as i16,
+                    },
+                    depth: 0.0..1.0,
+                };
 
-            command_buffer.set_viewports(0, &[viewport.clone()]);
-            command_buffer.set_scissors(0, &[viewport.rect]);
+                command_buffer.set_viewports(0, &[viewport.clone()]);
+                command_buffer.set_scissors(0, &[viewport.rect]);
 
-            command_buffer.bind_graphics_pipeline(&self.draw_system.pipeline);
+                command_buffer.bind_graphics_pipeline(&self.draw_system.pipeline);
 
-            {
-                let mut encoder = command_buffer.begin_render_pass_inline(
-                    &self.draw_system.render_pass,
-                    &self.draw_system.rtt_framebuffer,
-                    viewport.rect,
-                    &[ClearValue::Color(ClearColor::Float(
-                        self.canvas_clear_color,
-                    ))],
-                );
-
-                encoder.bind_graphics_descriptor_sets(
-                    &self.draw_system.pipeline_layout,
-                    0,
-                    vec![&self.draw_system.sprites_desc_set],
-                    &[],
-                );
-
-                self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-                for (_, sprite) in &self.sprites {
-                    encoder.push_graphics_constants(
-                        &self.draw_system.pipeline_layout,
-                        ShaderStageFlags::VERTEX,
-                        0,
-                        utils::push_constant_data(sprite),
+                {
+                    let mut encoder = command_buffer.begin_render_pass_inline(
+                        &self.draw_system.render_pass,
+                        &self.draw_system.rtt_framebuffer,
+                        viewport.rect,
+                        &[ClearValue::Color(ClearColor::Float(
+                            self.canvas_clear_color,
+                        ))],
                     );
 
-                    encoder.draw(0..6, 0..1);
+                    encoder.bind_graphics_descriptor_sets(
+                        &self.draw_system.pipeline_layout,
+                        0,
+                        vec![&self.draw_system.sprites_desc_set],
+                        &[],
+                    );
+
+                    self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+                    for (_, sprite) in &self.sprites {
+                        encoder.push_graphics_constants(
+                            &self.draw_system.pipeline_layout,
+                            ShaderStageFlags::VERTEX,
+                            0,
+                            utils::push_constant_data(sprite),
+                        );
+
+                        encoder.draw(0..6, 0..1);
+                    }
                 }
+
+                command_buffer.finish();
+                command_buffer
+            };
+
+            let scene_submission = Submission {
+                command_buffers: &[scene_command_buffer],
+                wait_semaphores: vec![(
+                    &self.draw_system.frame_semaphore,
+                    PipelineStage::BOTTOM_OF_PIPE,
+                )],
+                signal_semaphores: vec![&self.draw_system.scene_semaphore],
+            };
+
+            let blit_submission = Submission {
+                command_buffers: &[self.blit_command_buffer.take().unwrap()],
+                wait_semaphores: vec![(
+                    &self.draw_system.scene_semaphore,
+                    PipelineStage::BOTTOM_OF_PIPE,
+                )],
+                signal_semaphores: vec![&self.draw_system.present_semaphore],
+            };
+
+            self.draw_system.queue_group.queues[0].submit(scene_submission, None);
+            self.draw_system.queue_group.queues[0].submit(blit_submission, None);
+
+            let result = swapchain.present(
+                &mut self.draw_system.queue_group.queues[0],
+                self.frame_index,
+                vec![&self.draw_system.present_semaphore],
+            );
+
+            if result.is_err() {
+                self.draw_system.swapchain_invalidated = true;
             }
 
-            command_buffer.finish()
-        };
-
-        let scene_submission = Submission::new()
-            .wait_on(&[(
-                &self.draw_system.frame_semaphore,
-                PipelineStage::BOTTOM_OF_PIPE,
-            )])
-            .signal(&[&self.draw_system.scene_semaphore])
-            .submit(vec![scene_command_buffer]);
-
-        let blit_submission = Submission::new()
-            .wait_on(&[(
-                &self.draw_system.scene_semaphore,
-                PipelineStage::BOTTOM_OF_PIPE,
-            )])
-            .signal(&[&self.draw_system.present_semaphore])
-            .submit(vec![self.blit_command_buffer.take().unwrap()]);
-
-        self.draw_system.queue_group.queues[0].submit(scene_submission, None);
-        self.draw_system.queue_group.queues[0].submit(blit_submission, None);
-
-        let result = swapchain.present(
-            &mut self.draw_system.queue_group.queues[0],
-            self.frame_index,
-            vec![&self.draw_system.present_semaphore],
-        );
-
-        if result.is_err() {
-            self.draw_system.swapchain_invalidated = true;
+            self.finished = true;
         }
-
-        self.finished = true;
     }
 }
 
