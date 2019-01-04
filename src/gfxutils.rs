@@ -2,7 +2,7 @@ pub use gfx_hal::{
     adapter::MemoryTypeId,
     buffer,
     command::{
-        BufferImageCopy, ClearColor, ClearDepthStencil, ClearValue, OneShot, Primary, Submit,
+        BufferImageCopy, ClearColor, ClearDepthStencil, ClearValue, CommandBuffer, OneShot, Primary,
     },
     format::{Aspects, ChannelType, Format, Swizzle},
     image::{
@@ -68,7 +68,7 @@ pub mod utils {
         type_size / PUSH_CONSTANT_SIZE
     }
 
-    pub fn empty_buffer<Item>(
+    pub unsafe fn empty_buffer<Item>(
         device: &TDevice,
         memory_types: &[MemoryType],
         properties: Properties,
@@ -78,8 +78,8 @@ pub mod utils {
         let item_count = item_count;
         let stride = ::std::mem::size_of::<Item>() as u64;
         let buffer_len = item_count as u64 * stride;
-        let unbound_buffer = device.create_buffer(buffer_len, usage).unwrap();
-        let req = device.get_buffer_requirements(&unbound_buffer);
+        let mut buffer = device.create_buffer(buffer_len, usage).unwrap();
+        let req = device.get_buffer_requirements(&buffer);
         let upload_type = memory_types
             .iter()
             .enumerate()
@@ -90,14 +90,18 @@ pub mod utils {
             .into();
 
         let buffer_memory = device.allocate_memory(upload_type, req.size).unwrap();
-        let buffer = device
-            .bind_buffer_memory(&buffer_memory, 0, unbound_buffer)
+        device
+            .bind_buffer_memory(&buffer_memory, 0, &mut buffer)
             .unwrap();
 
         (buffer, buffer_memory)
     }
 
-    pub fn _fill_buffer<Item: Copy>(device: &TDevice, buffer_memory: &mut TMemory, items: &[Item]) {
+    pub unsafe fn _fill_buffer<Item: Copy>(
+        device: &TDevice,
+        buffer_memory: &mut TMemory,
+        items: &[Item],
+    ) {
         let stride = ::std::mem::size_of::<Item>() as u64;
         let buffer_len = items.len() as u64 * stride;
 
@@ -108,7 +112,7 @@ pub mod utils {
         device.release_mapping_writer(dest).unwrap();
     }
 
-    pub fn _create_buffer<Item: Copy>(
+    pub unsafe fn _create_buffer<Item: Copy>(
         device: &TDevice,
         memory_types: &[MemoryType],
         properties: Properties,
@@ -123,7 +127,7 @@ pub mod utils {
         (empty_buffer, empty_buffer_memory)
     }
 
-    pub fn create_image(
+    pub unsafe fn create_image(
         device: &TDevice,
         memory_types: &[MemoryType],
         width: u32,
@@ -134,7 +138,7 @@ pub mod utils {
     ) -> (TImage, TMemory, TImageView) {
         let kind = img::Kind::D2(width, height, 1, 1);
 
-        let unbound_image = device
+        let mut image = device
             .create_image(
                 kind,
                 1,
@@ -145,7 +149,7 @@ pub mod utils {
             )
             .expect("Failed to create unbound image");
 
-        let image_req = device.get_image_requirements(&unbound_image);
+        let image_req = device.get_image_requirements(&image);
 
         let device_type = memory_types
             .iter()
@@ -161,8 +165,8 @@ pub mod utils {
             .allocate_memory(device_type, image_req.size)
             .expect("Failed to allocate image");
 
-        let image = device
-            .bind_image_memory(&image_memory, 0, unbound_image)
+        device
+            .bind_image_memory(&image_memory, 0, &mut image)
             .expect("Failed to bind image");
 
         let image_view = device
@@ -182,7 +186,7 @@ pub mod utils {
         (image, image_memory, image_view)
     }
 
-    pub fn upload_image_data(
+    pub unsafe fn upload_image_data(
         device: &TDevice,
         physical_device: &TPhysicalDevice,
         command_pool: &mut TCommandPool,
@@ -224,12 +228,13 @@ pub mod utils {
         }
 
         let submit = {
-            let mut cmd_buffer = command_pool.acquire_command_buffer(false);
+            let mut cmd_buffer = command_pool.acquire_command_buffer::<OneShot>();
 
             let image_barrier = Barrier::Image {
                 states: (Access::empty(), Layout::Undefined)
                     ..(Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
                 target: dst_image,
+                families: None,
                 range: SubresourceRange {
                     aspects: Aspects::COLOR,
                     levels: 0..1,
@@ -269,6 +274,7 @@ pub mod utils {
                 states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
                     ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
                 target: dst_image,
+                families: None,
                 range: SubresourceRange {
                     aspects: Aspects::COLOR,
                     levels: 0..1,
@@ -282,11 +288,11 @@ pub mod utils {
                 &[image_barrier],
             );
 
-            cmd_buffer.finish()
+            cmd_buffer.finish();
+            cmd_buffer
         };
 
-        let submission = Submission::new().submit(Some(submit));
-        queue.submit(submission, Some(&fence));
+        queue.submit_nosemaphores(&[submit], Some(&fence));
 
         device.wait_for_fence(&fence, !0).unwrap();
 

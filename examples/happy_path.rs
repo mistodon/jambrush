@@ -2,10 +2,9 @@ extern crate image;
 extern crate jambrush;
 extern crate winit;
 
-
 fn main() {
     use std::time::Instant;
-    use winit::{Event, WindowEvent, EventsLoop, WindowBuilder, VirtualKeyCode};
+    use winit::{Event, EventsLoop, VirtualKeyCode, WindowBuilder, WindowEvent};
 
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
@@ -24,9 +23,18 @@ fn main() {
         },
     );
 
-    let ship_sprite = jambrush.load_sprite_file(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/wee_ship.png"));
-    let beastie_sprite = jambrush.load_sprite_file(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/beastie.png"));
-    let bullet_sprite = jambrush.load_sprite_file(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/bullet.png"));
+    let ship_sprite = jambrush.load_sprite_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/examples/wee_ship.png"
+    ));
+    let beastie_sprite = jambrush.load_sprite_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/examples/beastie.png"
+    ));
+    let bullet_sprite = jambrush.load_sprite_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/examples/bullet.png"
+    ));
 
     let inconsolata = {
         let path = concat!(
@@ -102,7 +110,8 @@ fn main() {
             }
 
             renderer.text(
-                &inconsolata, 14.0,
+                &inconsolata,
+                14.0,
                 &format!("Score: {}", 0),
                 ([0.0, 0.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
             );
