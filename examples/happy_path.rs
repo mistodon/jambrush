@@ -5,7 +5,7 @@ extern crate winit;
 
 fn main() {
     use std::time::Instant;
-    use winit::{Event, WindowEvent, EventsLoop, WindowBuilder};
+    use winit::{Event, WindowEvent, EventsLoop, WindowBuilder, VirtualKeyCode};
 
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
@@ -38,9 +38,11 @@ fn main() {
 
     let mut last_frame_time = Instant::now();
     let mut ship_arc_t = 0.0;
+    let mut bullets = vec![];
 
     loop {
         let mut quitting = false;
+        let mut shooting = false;
         let now = Instant::now();
         let dt = now.duration_since(last_frame_time).subsec_nanos() as f32 / 1_000_000_000.0;
         last_frame_time = now;
@@ -54,6 +56,11 @@ fn main() {
                     }
                     WindowEvent::Resized(res) => {
                         jambrush.window_resized(res.into());
+                    }
+                    WindowEvent::KeyboardInput { input, .. } => {
+                        if let Some(VirtualKeyCode::Space) = input.virtual_keycode {
+                            shooting = true;
+                        }
                     }
                     _ => {}
                 }
@@ -80,11 +87,19 @@ fn main() {
             ship_pos = [x0 + w + w * cos_x, y0 + h + h * sin_y];
         }
 
+        if shooting {
+            bullets.push(ship_pos);
+        }
+
         // Render
         {
             let mut renderer =
                 jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], Some([0.1, 0.1, 0.1, 1.0]));
             renderer.sprite(&ship_sprite, (ship_pos, 0.0));
+
+            for &bullet in &bullets {
+                renderer.sprite(&bullet_sprite, (bullet, 1.0));
+            }
 
             renderer.text(
                 &inconsolata, 14.0,
