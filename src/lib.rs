@@ -832,6 +832,7 @@ impl JamBrushSystem {
 
             let submit = {
                 let mut cmd_buffer = self.command_pool.acquire_command_buffer::<OneShot>();
+                cmd_buffer.begin();
 
                 cmd_buffer.copy_image_to_buffer(
                     image,
@@ -923,7 +924,9 @@ impl<'a> Renderer<'a> {
                 .unwrap();
 
             blit_command_buffer = {
-                let mut command_buffer = draw_system.command_pool.acquire_command_buffer();
+                let mut command_buffer =
+                    draw_system.command_pool.acquire_command_buffer::<OneShot>();
+                command_buffer.begin();
 
                 let [vwidth, vheight] = draw_system.resolution;
 
@@ -1195,6 +1198,7 @@ impl<'a> Renderer<'a> {
                     .draw_system
                     .command_pool
                     .acquire_command_buffer::<OneShot>();
+                command_buffer.begin();
 
                 let [vwidth, vheight] = self.draw_system.resolution;
                 let viewport = Viewport {

@@ -229,6 +229,7 @@ pub mod utils {
 
         let submit = {
             let mut cmd_buffer = command_pool.acquire_command_buffer::<OneShot>();
+            cmd_buffer.begin();
 
             let image_barrier = Barrier::Image {
                 states: (Access::empty(), Layout::Undefined)
