@@ -1066,12 +1066,12 @@ impl<'a> Renderer<'a> {
         self.sprites.push((args.depth, data));
     }
 
-    pub fn text<T: Into<TextArgs>>(&mut self, font: &Font, size: f32, text: &str, args: T) {
+    pub fn text<T: Into<TextArgs>, S: AsRef<str>>(&mut self, font: &Font, size: f32, text: S, args: T) {
         let args = args.into();
         self.text_with(font, size, text, &args);
     }
 
-    pub fn text_with(&mut self, font: &Font, size: f32, text: &str, args: &TextArgs) {
+    pub fn text_with<S: AsRef<str>>(&mut self, font: &Font, size: f32, text: S, args: &TextArgs) {
         use rusttype::{Point, Scale};
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
@@ -1082,7 +1082,7 @@ impl<'a> Renderer<'a> {
         let font_id = font.id;
         let font = &self.draw_system.fonts[font_id];
         let glyphs = font.layout(
-            text,
+            text.as_ref(),
             Scale { x: size, y: size },
             Point {
                 x: args.pos[0] - cam_x,
