@@ -1,3 +1,15 @@
+#[cfg(all(target_os = "macos", not(feature = "opengl")))]
+extern crate gfx_backend_metal as backend;
+
+#[cfg(all(windows, not(feature = "opengl")))]
+extern crate gfx_backend_dx12 as backend;
+
+#[cfg(all(unix, not(target_os = "macos"), not(feature = "opengl")))]
+extern crate gfx_backend_vulkan as backend;
+
+#[cfg(feature = "opengl")]
+extern crate gfx_backend_gl as backend;
+
 mod gfxutils;
 
 use std::path::Path;
@@ -5,7 +17,7 @@ use std::path::Path;
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
 use texture_packer::TexturePacker;
-use winit::Window;
+use winit::{Window, WindowBuilder, EventsLoop};
 
 use crate::gfxutils::*;
 
@@ -121,7 +133,13 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
     drop_alarm: DropAlarm,
+
+    #[cfg(not(feature = "opengl"))]
     _instance: backend::Instance,
+
+    #[cfg(not(feature = "opengl"))]
+    _window: Window,
+
     surface: backend::Surface,
     adapter: gfx_hal::Adapter<backend::Backend>,
     device: backend::Device,
@@ -172,21 +190,56 @@ pub struct JamBrushSystem {
 }
 
 impl JamBrushSystem {
-    pub fn new(window: &Window, config: &JamBrushConfig) -> Self {
-        let resolution = config.canvas_size.unwrap_or_else(|| {
-            let (window_w, window_h) = window.get_inner_size().unwrap().into();
-            [window_w, window_h]
-        });
-
+    pub fn new(
+            window_builder: WindowBuilder,
+            events_loop: &EventsLoop,
+            config: &JamBrushConfig) -> Self {
         let logging = config.logging;
 
         if logging {
             println!("Constructing JamBrushSystem:");
         }
 
-        let _instance = backend::Instance::create("JamBrush", 1);
-        let surface = _instance.create_surface(window);
-        let adapter = _instance.enumerate_adapters().remove(0);
+        #[cfg(not(feature = "opengl"))]
+        let (_window, inner_size, dpi_factor, _instance, surface, adapter) = {
+            let window = window_builder.build(events_loop).unwrap();
+            let inner_size = window.get_inner_size().unwrap();
+            let dpi_factor = window.get_hidpi_factor();
+            let _instance = backend::Instance::create("JamBrush", 1);
+            let surface = _instance.create_surface(&window);
+            let adapter = _instance.enumerate_adapters().remove(0);
+            (window, inner_size, dpi_factor, _instance, surface, adapter)
+        };
+
+        #[cfg(feature = "opengl")]
+        let (inner_size, dpi_factor, adapter, surface) = {
+            // TODO: We probably shouldn't just make a new window...
+            let window = {
+                let builder = backend::config_context(
+                        backend::glutin::ContextBuilder::new(),
+                        Format::Rgba8Srgb,
+                        None,
+                ).with_vsync(true);
+
+                backend::glutin::GlWindow::new(
+                    window_builder,
+                    builder,
+                    &events_loop,
+                ).unwrap()
+            };
+
+            let inner_size = window.get_inner_size().unwrap();
+            let dpi_factor = window.get_hidpi_factor();
+            let surface = backend::Surface::from_window(window);
+            let adapter = surface.enumerate_adapters().remove(0);
+            (inner_size, dpi_factor, adapter, surface)
+        };
+
+        let resolution = config.canvas_size.unwrap_or_else(|| {
+            let (window_w, window_h) = inner_size.into();
+            [window_w, window_h]
+        });
+
         let (device, queue_group) = adapter
             .open_with::<_, Graphics>(1, |family| surface.supports_queue_family(family))
             .unwrap();
@@ -542,7 +595,13 @@ impl JamBrushSystem {
 
         JamBrushSystem {
             drop_alarm: DropAlarm(false),
+
+            #[cfg(not(feature = "opengl"))]
             _instance,
+
+            #[cfg(not(feature = "opengl"))]
+            _window,
+
             surface,
             adapter,
             device,
@@ -581,7 +640,7 @@ impl JamBrushSystem {
             swapchain,
             swapchain_invalidated: true,
             resolution,
-            dpi_factor: window.get_hidpi_factor(),
+            dpi_factor,
             logging,
             debugging: config.debugging,
         }
