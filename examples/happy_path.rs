@@ -7,14 +7,13 @@ fn main() {
     use winit::{Event, EventsLoop, VirtualKeyCode, WindowBuilder, WindowEvent};
 
     let mut events_loop = EventsLoop::new();
-    let window = WindowBuilder::new()
+    let window_builder = WindowBuilder::new()
         .with_title("JamBrush - Happy path")
-        .with_dimensions((800, 450).into())
-        .build(&events_loop)
-        .unwrap();
+        .with_dimensions((800, 450).into());
 
     let mut jambrush = jambrush::JamBrushSystem::new(
-        &window,
+        window_builder,
+        &events_loop,
         &jambrush::JamBrushConfig {
             canvas_size: Some([256, 144]),
             max_texture_atlas_size: Some(1024),
