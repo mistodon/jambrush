@@ -52,14 +52,14 @@ pub type TFramebuffer = <::backend::Backend as Backend>::Framebuffer;
 pub mod utils {
     use super::*;
 
-    pub fn push_constant_data<T>(data: &T) -> &[u32] {
-        let size = push_constant_size::<T>();
+    pub fn _push_constant_data<T>(data: &T) -> &[u32] {
+        let size = _push_constant_size::<T>();
         let ptr = data as *const T as *const u32;
 
         unsafe { ::std::slice::from_raw_parts(ptr, size) }
     }
 
-    pub fn push_constant_size<T>() -> usize {
+    pub fn _push_constant_size<T>() -> usize {
         const PUSH_CONSTANT_SIZE: usize = ::std::mem::size_of::<u32>();
         let type_size = ::std::mem::size_of::<T>();
 
@@ -97,7 +97,7 @@ pub mod utils {
         (buffer, buffer_memory)
     }
 
-    pub unsafe fn _fill_buffer<Item: Copy>(
+    pub unsafe fn fill_buffer<Item: Copy>(
         device: &TDevice,
         buffer_memory: &mut TMemory,
         items: &[Item],
@@ -112,7 +112,7 @@ pub mod utils {
         device.release_mapping_writer(dest).unwrap();
     }
 
-    pub unsafe fn _create_buffer<Item: Copy>(
+    pub unsafe fn create_buffer<Item: Copy>(
         device: &TDevice,
         memory_types: &[MemoryType],
         properties: Properties,
@@ -122,7 +122,7 @@ pub mod utils {
         let (empty_buffer, mut empty_buffer_memory) =
             empty_buffer::<Item>(device, memory_types, properties, usage, items.len());
 
-        _fill_buffer::<Item>(device, &mut empty_buffer_memory, items);
+        fill_buffer::<Item>(device, &mut empty_buffer_memory, items);
 
         (empty_buffer, empty_buffer_memory)
     }
