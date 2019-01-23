@@ -9,7 +9,7 @@ fn main() {
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
         .with_title("JamBrush - Happy path")
-        .with_dimensions((800, 450).into())
+        .with_dimensions((256, 144).into())
         .build(&events_loop)
         .unwrap();
 

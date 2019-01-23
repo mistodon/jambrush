@@ -9,6 +9,17 @@ use winit::Window;
 
 use crate::gfxutils::*;
 
+const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const MAX_SPRITE_COUNT: usize = 10000;
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct Vertex {
+    pub tint: [f32; 4],
+    pub uv: [f32; 2],
+    pub offset: [f32; 3],
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct SpritePushConstants {
@@ -92,6 +103,21 @@ pub enum Capture {
     Window,
 }
 
+fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32; 4]; 4] {
+    let [sx, sy] = resolution;
+    let [w, h] = scale;
+    let [x, y] = pos;
+    let dx = -1.0 + 2.0 * (x / sx as f32);
+    let dy = -1.0 + 2.0 * (y / sy as f32);
+
+    [
+        [(w / sx as f32) * 2.0, 0.0, 0.0, 0.0],
+        [0.0, (h / sy as f32) * 2.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [dx, dy, 0.0, 1.0],
+    ]
+}
+
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
     drop_alarm: DropAlarm,
@@ -126,6 +152,9 @@ pub struct JamBrushSystem {
     atlas_memory: TMemory,
     atlas_view: TImageView,
     atlas_sampler: TSampler,
+    sprite_vertex_data: Vec<Vertex>,
+    vertex_buffers: Vec<TBuffer>,
+    vertex_memories: Vec<TMemory>,
     fonts: Vec<RTFont<'static>>,
     glyph_cache: RTCache<'static>,
     swapchain: Option<(
@@ -234,12 +263,11 @@ impl JamBrushSystem {
                 .unwrap()
         };
 
-        let push_size = utils::push_constant_size::<SpritePushConstants>() as u32;
         let pipeline_layout = unsafe {
             device
                 .create_pipeline_layout(
                     vec![&set_layout],
-                    &[(ShaderStageFlags::VERTEX, 0..push_size)],
+                    &[],
                 )
                 .unwrap()
         };
@@ -299,6 +327,39 @@ impl JamBrushSystem {
                 .targets
                 .push(ColorBlendDesc(ColorMask::ALL, BlendState::ALPHA));
 
+            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
+                binding: 0,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                rate: 0,
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 0,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgba32Float,
+                    offset: 0,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 1,
+                binding: 0,
+                element: Element {
+                    format: Format::Rg32Float,
+                    offset: 16,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 2,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgb32Float,
+                    offset: 24,
+                },
+            });
+
             device
                 .create_graphics_pipeline(&pipeline_desc, None)
                 .expect("create_graphics_pipeline failed")
@@ -331,6 +392,34 @@ impl JamBrushSystem {
         let present_semaphore = device.create_semaphore().unwrap();
 
         let memory_types = adapter.physical_device.memory_properties().memory_types;
+
+
+        let (quad_buffer, quad_memory) = unsafe { utils::create_buffer(
+            &device,
+            &memory_types,
+            Properties::CPU_VISIBLE,
+            buffer::Usage::VERTEX,
+            &[
+                Vertex { offset: [-1.0, -1.0, 0.0], uv: [0.0, 0.0], tint: WHITE },
+                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, 1.0], tint: WHITE },
+                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 0.0], tint: WHITE },
+                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, 1.0], tint: WHITE },
+                Vertex { offset: [ 1.0,  1.0, 0.0], uv: [1.0, 1.0], tint: WHITE },
+                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 0.0], tint: WHITE },
+            ],
+        )};
+
+
+        let (sprites_buffer, sprites_memory) = unsafe { utils::empty_buffer::<Vertex>(
+            &device,
+            &memory_types,
+            Properties::CPU_VISIBLE,
+            buffer::Usage::VERTEX,
+            MAX_SPRITE_COUNT * 6,
+        )};
+
+        let vertex_buffers = vec![quad_buffer, sprites_buffer];
+        let vertex_memories = vec![quad_memory, sprites_memory];
 
         if logging {
             println!("  Canvas size: {} x {}", resolution[0], resolution[1]);
@@ -484,6 +573,9 @@ impl JamBrushSystem {
             atlas_memory,
             atlas_view,
             atlas_sampler,
+            sprite_vertex_data: Vec::with_capacity(MAX_SPRITE_COUNT * 6),
+            vertex_buffers,
+            vertex_memories,
             fonts: vec![],
             glyph_cache,
             swapchain,
@@ -514,6 +606,8 @@ impl JamBrushSystem {
             scene_semaphore,
             frame_semaphore,
             present_semaphore,
+            vertex_buffers,
+            vertex_memories,
             rtt_image,
             rtt_memory,
             rtt_view,
@@ -538,6 +632,12 @@ impl JamBrushSystem {
             device.destroy_image_view(rtt_view);
             device.free_memory(rtt_memory);
             device.destroy_image(rtt_image);
+            for buffer in vertex_buffers {
+                device.destroy_buffer(buffer);
+            }
+            for memory in vertex_memories {
+                device.free_memory(memory);
+            }
             device.destroy_semaphore(present_semaphore);
             device.destroy_semaphore(frame_semaphore);
             device.destroy_semaphore(scene_semaphore);
@@ -964,6 +1064,7 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
                 command_buffer.bind_graphics_pipeline(&draw_system.pipeline);
+                command_buffer.bind_vertex_buffers(0, vec![(&draw_system.vertex_buffers[0], 0)]);
                 command_buffer.bind_graphics_descriptor_sets(
                     &draw_system.pipeline_layout,
                     0,
@@ -977,23 +1078,6 @@ impl<'a> Renderer<'a> {
                         &framebuffers[frame_index as usize],
                         viewport.rect,
                         &[ClearValue::Color(ClearColor::Float(border_clear_color))],
-                    );
-
-                    encoder.push_graphics_constants(
-                        &draw_system.pipeline_layout,
-                        ShaderStageFlags::VERTEX,
-                        0,
-                        utils::push_constant_data(&SpritePushConstants {
-                            transform: [
-                                [2.0, 0.0, 0.0, 0.0],
-                                [0.0, 2.0, 0.0, 0.0],
-                                [0.0, 0.0, 1.0, 0.0],
-                                [-1.0, -1.0, 0.0, 1.0],
-                            ],
-                            tint: [1.0, 1.0, 1.0, 1.0],
-                            uv_origin: [0.0, 0.0],
-                            uv_scale: [1.0, 1.0],
-                        }),
                     );
 
                     encoder.draw(0..6, 0..1);
@@ -1189,6 +1273,45 @@ impl<'a> Renderer<'a> {
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
 
+        // Upload all sprite data to sprites_buffer
+        {
+            let sprite_data = &mut self.draw_system.sprite_vertex_data;
+            sprite_data.clear();
+
+            for (depth, sprite) in &self.sprites {
+                const BASE_VERTICES: &[([f32; 2], [f32; 2])] = &[
+                    ([0.0, 0.0], [0.0, 0.0]),
+                    ([0.0, 1.0], [0.0, 1.0]),
+                    ([1.0, 0.0], [1.0, 0.0]),
+                    ([0.0, 1.0], [0.0, 1.0]),
+                    ([1.0, 1.0], [1.0, 1.0]),
+                    ([1.0, 0.0], [1.0, 0.0]),
+                ];
+
+                // TODO: Don't even have an intermediary matrix
+                for &([x, y], [u, v]) in BASE_VERTICES {
+                    let [ou, ov] = sprite.uv_origin;
+                    let [su, sv] = sprite.uv_scale;
+
+                    let sx = sprite.transform[0][0];
+                    let sy = sprite.transform[1][1];
+                    let ox = sprite.transform[3][0];
+                    let oy = sprite.transform[3][1];
+                    let z = *depth;
+
+                    sprite_data.push(Vertex {
+                        offset: [ox + sx * x, oy + sy * y, z],
+                        tint: sprite.tint,
+                        uv: [ou + su * u, ov + sv * v],
+                    });
+                }
+            }
+
+            unsafe {
+                utils::fill_buffer(&self.draw_system.device, &mut self.draw_system.vertex_memories[1], sprite_data);
+            }
+        }
+
         unsafe {
             let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
                 self.draw_system.swapchain.as_mut().unwrap();
@@ -1215,6 +1338,13 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
                 command_buffer.bind_graphics_pipeline(&self.draw_system.pipeline);
+                command_buffer.bind_vertex_buffers(0, vec![(&self.draw_system.vertex_buffers[1], 0)]);
+                command_buffer.bind_graphics_descriptor_sets(
+                    &self.draw_system.pipeline_layout,
+                    0,
+                    vec![&self.draw_system.sprites_desc_set],
+                    &[],
+                );
 
                 {
                     let mut encoder = command_buffer.begin_render_pass_inline(
@@ -1226,25 +1356,10 @@ impl<'a> Renderer<'a> {
                         ))],
                     );
 
-                    encoder.bind_graphics_descriptor_sets(
-                        &self.draw_system.pipeline_layout,
-                        0,
-                        vec![&self.draw_system.sprites_desc_set],
-                        &[],
-                    );
-
                     self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-                    for (_, sprite) in &self.sprites {
-                        encoder.push_graphics_constants(
-                            &self.draw_system.pipeline_layout,
-                            ShaderStageFlags::VERTEX,
-                            0,
-                            utils::push_constant_data(sprite),
-                        );
-
-                        encoder.draw(0..6, 0..1);
-                    }
+                    let num_verts = self.sprites.len() as u32 * 6;
+                    encoder.draw(0..num_verts, 0..1);
                 }
 
                 command_buffer.finish();
@@ -1295,21 +1410,6 @@ impl<'a> Drop for Renderer<'a> {
     }
 }
 
-fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32; 4]; 4] {
-    let [sx, sy] = resolution;
-    let [w, h] = scale;
-    let [x, y] = pos;
-    let dx = -1.0 + 2.0 * (x / sx as f32);
-    let dy = -1.0 + 2.0 * (y / sy as f32);
-
-    [
-        [(w / sx as f32) * 2.0, 0.0, 0.0, 0.0],
-        [0.0, (h / sy as f32) * 2.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [dx, dy, 0.0, 1.0],
-    ]
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpriteArgs {
     pub pos: [f32; 2],
@@ -1324,7 +1424,7 @@ impl Default for SpriteArgs {
             pos: [0.0, 0.0],
             size: None,
             depth: 0.0,
-            tint: [1.0, 1.0, 1.0, 1.0],
+            tint: WHITE,
         }
     }
 }
@@ -1383,7 +1483,7 @@ impl Default for TextArgs {
         TextArgs {
             pos: [0.0, 0.0],
             depth: 0.0,
-            tint: [1.0, 1.0, 1.0, 1.0],
+            tint: WHITE,
         }
     }
 }
