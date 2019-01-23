@@ -23,6 +23,7 @@ use crate::gfxutils::*;
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const MAX_SPRITE_COUNT: usize = 10000;
+const MAX_DEPTH: f32 = 10000.0;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
@@ -446,19 +447,28 @@ impl JamBrushSystem {
 
         let memory_types = adapter.physical_device.memory_properties().memory_types;
 
-
+        const QY: f32 = {
+            #[cfg(feature = "opengl")]
+            {
+                0.0
+            }
+            #[cfg(not(feature = "opengl"))]
+            {
+                1.0
+            }
+        };
         let (quad_buffer, quad_memory) = unsafe { utils::create_buffer(
             &device,
             &memory_types,
             Properties::CPU_VISIBLE,
             buffer::Usage::VERTEX,
             &[
-                Vertex { offset: [-1.0, -1.0, 0.0], uv: [0.0, 0.0], tint: WHITE },
-                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, 1.0], tint: WHITE },
-                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 0.0], tint: WHITE },
-                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, 1.0], tint: WHITE },
-                Vertex { offset: [ 1.0,  1.0, 0.0], uv: [1.0, 1.0], tint: WHITE },
-                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 0.0], tint: WHITE },
+                Vertex { offset: [-1.0, -1.0, 0.0], uv: [0.0, 1.0 - QY], tint: WHITE },
+                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, QY], tint: WHITE },
+                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 1.0 - QY], tint: WHITE },
+                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, QY], tint: WHITE },
+                Vertex { offset: [ 1.0,  1.0, 0.0], uv: [1.0, QY], tint: WHITE },
+                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 1.0 - QY], tint: WHITE },
             ],
         )};
 
@@ -889,10 +899,14 @@ impl JamBrushSystem {
         ));
         self.log(format!("  DPI factor: {}", self.dpi_factor));
 
-        swap_config.extent.width =
-            (f64::from(swap_config.extent.width) * self.dpi_factor).round() as u32;
-        swap_config.extent.height =
-            (f64::from(swap_config.extent.height) * self.dpi_factor).round() as u32;
+        // TODO: Why?? gfx-hal bug?
+        #[cfg(not(feature = "opengl"))]
+        {
+            swap_config.extent.width =
+                (f64::from(swap_config.extent.width) * self.dpi_factor).round() as u32;
+            swap_config.extent.height =
+                (f64::from(swap_config.extent.height) * self.dpi_factor).round() as u32;
+        }
 
         self.log(format!(
             "  Swapchain dimensions: {} x {}",
@@ -1091,6 +1105,7 @@ impl<'a> Renderer<'a> {
 
                 let base_width = (f64::from(vwidth) * draw_system.dpi_factor) as u32;
                 let base_height = (f64::from(vheight) * draw_system.dpi_factor) as u32;
+
                 let integer_scale =
                     std::cmp::min(extent.width / base_width, extent.height / base_height);
 
@@ -1109,12 +1124,21 @@ impl<'a> Renderer<'a> {
                 let viewport_x = (extent.width - viewport_width) / 2;
                 let viewport_y = (extent.height - viewport_height) / 2;
 
+                // TODO: What??? Why???
+                let viewport_scale_hack = {
+                    #[cfg(feature = "opengl")]
+                    { (2.0 / draw_system.dpi_factor) as i16 }
+
+                    #[cfg(not(feature = "opengl"))]
+                    { 1 }
+                };
+
                 let viewport = Viewport {
                     rect: Rect {
                         x: viewport_x as i16,
                         y: viewport_y as i16,
-                        w: viewport_width as i16,
-                        h: viewport_height as i16,
+                        w: viewport_width as i16 * viewport_scale_hack,
+                        h: viewport_height as i16 * viewport_scale_hack,
                     },
                     depth: 0.0..1.0,
                 };
@@ -1356,7 +1380,7 @@ impl<'a> Renderer<'a> {
                     let sy = sprite.transform[1][1];
                     let ox = sprite.transform[3][0];
                     let oy = sprite.transform[3][1];
-                    let z = *depth;
+                    let z = *depth / MAX_DEPTH;
 
                     sprite_data.push(Vertex {
                         offset: [ox + sx * x, oy + sy * y, z],
