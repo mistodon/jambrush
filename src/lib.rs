@@ -1080,6 +1080,7 @@ impl<'a> Renderer<'a> {
         unsafe {
             // TODO: See next TODO
             draw_system.update_swapchain();
+
             draw_system.command_pool.reset();
         }
 
@@ -1450,7 +1451,7 @@ impl<'a> Renderer<'a> {
             };
 
             let scene_submission = Submission {
-                command_buffers: &[scene_command_buffer],
+                command_buffers: Some(&scene_command_buffer),
                 wait_semaphores: vec![(
                     &self.draw_system.frame_semaphore,
                     PipelineStage::BOTTOM_OF_PIPE,
@@ -1459,7 +1460,7 @@ impl<'a> Renderer<'a> {
             };
 
             let blit_submission = Submission {
-                command_buffers: &[self.blit_command_buffer.take().unwrap()],
+                command_buffers: Some(self.blit_command_buffer.as_ref().unwrap()),
                 wait_semaphores: vec![(
                     &self.draw_system.scene_semaphore,
                     PipelineStage::BOTTOM_OF_PIPE,
@@ -1479,6 +1480,9 @@ impl<'a> Renderer<'a> {
             if result.is_err() {
                 self.draw_system.swapchain_invalidated = true;
             }
+
+            // TODO: Can we reuse these buffers?
+            self.draw_system.command_pool.free(vec![scene_command_buffer, self.blit_command_buffer.take().unwrap()]);
 
             self.finished = true;
         }
