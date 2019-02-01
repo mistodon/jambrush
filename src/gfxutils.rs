@@ -293,9 +293,12 @@ pub mod utils {
             cmd_buffer
         };
 
-        queue.submit_nosemaphores(&[submit], Some(&fence));
+        queue.submit_nosemaphores(Some(&submit), Some(&fence));
 
         device.wait_for_fence(&fence, !0).unwrap();
+
+        // TODO: Can we just pass in a command buffer?
+        command_pool.free(Some(submit));
 
         device.destroy_buffer(image_upload_buffer);
         device.free_memory(image_upload_memory);
