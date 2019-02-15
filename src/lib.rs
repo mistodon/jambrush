@@ -22,8 +22,8 @@ use winit::{Window, WindowBuilder, EventsLoop};
 use crate::gfxutils::*;
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const MAX_SPRITE_COUNT: usize = 10000;
-const MAX_DEPTH: f32 = 10000.0;
+const MAX_SPRITE_COUNT: usize = 100000; // TODO: Make dynamic
+const MAX_DEPTH: f32 = 10000.0; // TODO: Is this the best we can do? Also we don't even _use_ depth.
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
@@ -75,6 +75,7 @@ impl SpriteSheet {
 
     pub fn sprite(&self, coord: [usize; 2]) -> Sprite {
         let [x, y] = coord;
+        debug_assert!(x < self.width && y < self.height, "Sprite {:?} is out of the {:?} range allowed by this SpriteSheet.", [x, y], [self.width, self.height]);
         Sprite {
             id: self.id,
             sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
@@ -1362,6 +1363,8 @@ impl<'a> Renderer<'a> {
             let sprite_data = &mut self.draw_system.sprite_vertex_data;
             sprite_data.clear();
 
+            self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
             for (depth, sprite) in &self.sprites {
                 const BASE_VERTICES: &[([f32; 2], [f32; 2])] = &[
                     ([0.0, 0.0], [0.0, 0.0]),
@@ -1439,8 +1442,6 @@ impl<'a> Renderer<'a> {
                             self.canvas_clear_color,
                         ))],
                     );
-
-                    self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
                     let num_verts = self.sprites.len() as u32 * 6;
                     encoder.draw(0..num_verts, 0..1);
