@@ -17,7 +17,7 @@ use std::path::Path;
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
 use texture_packer::TexturePacker;
-use winit::{Window, WindowBuilder, EventsLoop};
+use winit::{EventsLoop, Window, WindowBuilder};
 
 use crate::gfxutils::*;
 
@@ -75,7 +75,12 @@ impl SpriteSheet {
 
     pub fn sprite(&self, coord: [usize; 2]) -> Sprite {
         let [x, y] = coord;
-        debug_assert!(x < self.width && y < self.height, "Sprite {:?} is out of the {:?} range allowed by this SpriteSheet.", [x, y], [self.width, self.height]);
+        debug_assert!(
+            x < self.width && y < self.height,
+            "Sprite {:?} is out of the {:?} range allowed by this SpriteSheet.",
+            [x, y],
+            [self.width, self.height]
+        );
         Sprite {
             id: self.id,
             sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
@@ -108,6 +113,7 @@ pub struct JamBrushConfig {
     pub max_texture_atlas_size: Option<u32>,
     pub logging: bool,
     pub debugging: bool,
+    pub debug_texture_atlas: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,9 +199,10 @@ pub struct JamBrushSystem {
 
 impl JamBrushSystem {
     pub fn new(
-            window_builder: WindowBuilder,
-            events_loop: &EventsLoop,
-            config: &JamBrushConfig) -> Self {
+        window_builder: WindowBuilder,
+        events_loop: &EventsLoop,
+        config: &JamBrushConfig,
+    ) -> Self {
         let logging = config.logging;
 
         if logging {
@@ -218,16 +225,13 @@ impl JamBrushSystem {
             // TODO: We probably shouldn't just make a new window...
             let window = {
                 let builder = backend::config_context(
-                        backend::glutin::ContextBuilder::new(),
-                        Format::Rgba8Srgb,
-                        None,
-                ).with_vsync(true);
+                    backend::glutin::ContextBuilder::new(),
+                    Format::Rgba8Srgb,
+                    None,
+                )
+                .with_vsync(true);
 
-                backend::glutin::GlWindow::new(
-                    window_builder,
-                    builder,
-                    &events_loop,
-                ).unwrap()
+                backend::glutin::GlWindow::new(window_builder, builder, &events_loop).unwrap()
             };
 
             let inner_size = window.get_inner_size().unwrap();
@@ -320,10 +324,7 @@ impl JamBrushSystem {
 
         let pipeline_layout = unsafe {
             device
-                .create_pipeline_layout(
-                    vec![&set_layout],
-                    &[],
-                )
+                .create_pipeline_layout(vec![&set_layout], &[])
                 .unwrap()
         };
 
@@ -458,29 +459,56 @@ impl JamBrushSystem {
                 1.0
             }
         };
-        let (quad_buffer, quad_memory) = unsafe { utils::create_buffer(
-            &device,
-            &memory_types,
-            Properties::CPU_VISIBLE,
-            buffer::Usage::VERTEX,
-            &[
-                Vertex { offset: [-1.0, -1.0, 0.0], uv: [0.0, 1.0 - QY], tint: WHITE },
-                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, QY], tint: WHITE },
-                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 1.0 - QY], tint: WHITE },
-                Vertex { offset: [-1.0,  1.0, 0.0], uv: [0.0, QY], tint: WHITE },
-                Vertex { offset: [ 1.0,  1.0, 0.0], uv: [1.0, QY], tint: WHITE },
-                Vertex { offset: [ 1.0, -1.0, 0.0], uv: [1.0, 1.0 - QY], tint: WHITE },
-            ],
-        )};
+        let (quad_buffer, quad_memory) = unsafe {
+            utils::create_buffer(
+                &device,
+                &memory_types,
+                Properties::CPU_VISIBLE,
+                buffer::Usage::VERTEX,
+                &[
+                    Vertex {
+                        offset: [-1.0, -1.0, 0.0],
+                        uv: [0.0, 1.0 - QY],
+                        tint: WHITE,
+                    },
+                    Vertex {
+                        offset: [-1.0, 1.0, 0.0],
+                        uv: [0.0, QY],
+                        tint: WHITE,
+                    },
+                    Vertex {
+                        offset: [1.0, -1.0, 0.0],
+                        uv: [1.0, 1.0 - QY],
+                        tint: WHITE,
+                    },
+                    Vertex {
+                        offset: [-1.0, 1.0, 0.0],
+                        uv: [0.0, QY],
+                        tint: WHITE,
+                    },
+                    Vertex {
+                        offset: [1.0, 1.0, 0.0],
+                        uv: [1.0, QY],
+                        tint: WHITE,
+                    },
+                    Vertex {
+                        offset: [1.0, -1.0, 0.0],
+                        uv: [1.0, 1.0 - QY],
+                        tint: WHITE,
+                    },
+                ],
+            )
+        };
 
-
-        let (sprites_buffer, sprites_memory) = unsafe { utils::empty_buffer::<Vertex>(
-            &device,
-            &memory_types,
-            Properties::CPU_VISIBLE,
-            buffer::Usage::VERTEX,
-            MAX_SPRITE_COUNT * 6,
-        )};
+        let (sprites_buffer, sprites_memory) = unsafe {
+            utils::empty_buffer::<Vertex>(
+                &device,
+                &memory_types,
+                Properties::CPU_VISIBLE,
+                buffer::Usage::VERTEX,
+                MAX_SPRITE_COUNT * 6,
+            )
+        };
 
         let vertex_buffers = vec![quad_buffer, sprites_buffer];
         let vertex_memories = vec![quad_memory, sprites_memory];
@@ -538,7 +566,17 @@ impl JamBrushSystem {
             );
         }
 
-        let atlas_image = DynamicImage::new_rgba8(atlas_size, atlas_size).to_rgba();
+        let mut atlas_image = DynamicImage::new_rgba8(atlas_size, atlas_size).to_rgba();
+
+        if config.debug_texture_atlas {
+            for (x, y, pixel) in atlas_image.enumerate_pixels_mut() {
+                let r = x & 255;
+                let g = x >> 8;
+                let b = y & 255;
+                let a = y >> 8;
+                *pixel = image::Rgba([r as u8, g as u8, b as u8, a as u8]);
+            }
+        }
 
         let texture_fence = device.create_fence(false).unwrap();
 
@@ -972,7 +1010,9 @@ impl JamBrushSystem {
             let swizzle = false;
             let path = path.as_ref();
             let image = match capture_type {
-                Capture::Window => unimplemented!("Cannot capture window contents yet. Use `Canvas` instead."),
+                Capture::Window => {
+                    unimplemented!("Cannot capture window contents yet. Use `Canvas` instead.")
+                }
                 Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &self.atlas_texture,
             };
@@ -1129,10 +1169,14 @@ impl<'a> Renderer<'a> {
                 // TODO: What??? Why???
                 let viewport_scale_hack = {
                     #[cfg(feature = "opengl")]
-                    { (2.0 / draw_system.dpi_factor) as i16 }
+                    {
+                        (2.0 / draw_system.dpi_factor) as i16
+                    }
 
                     #[cfg(not(feature = "opengl"))]
-                    { 1 }
+                    {
+                        1
+                    }
                 };
 
                 let viewport = Viewport {
@@ -1235,7 +1279,13 @@ impl<'a> Renderer<'a> {
         self.sprites.push((args.depth, data));
     }
 
-    pub fn text<T: Into<TextArgs>, S: AsRef<str>>(&mut self, font: &Font, size: f32, text: S, args: T) {
+    pub fn text<T: Into<TextArgs>, S: AsRef<str>>(
+        &mut self,
+        font: &Font,
+        size: f32,
+        text: S,
+        args: T,
+    ) {
         let args = args.into();
         self.text_with(font, size, text, &args);
     }
@@ -1344,7 +1394,7 @@ impl<'a> Renderer<'a> {
                             [res_x as f32, res_y as f32],
                         ),
                         tint,
-                        uv_origin: [u, v + 0.5],
+                        uv_origin: [u, 0.5 + v / 2.0],
                         uv_scale: [uw, vh / 2.0],
                     }
                 };
@@ -1395,7 +1445,11 @@ impl<'a> Renderer<'a> {
             }
 
             unsafe {
-                utils::fill_buffer(&self.draw_system.device, &mut self.draw_system.vertex_memories[1], sprite_data);
+                utils::fill_buffer(
+                    &self.draw_system.device,
+                    &mut self.draw_system.vertex_memories[1],
+                    sprite_data,
+                );
             }
         }
 
@@ -1425,7 +1479,8 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
                 command_buffer.bind_graphics_pipeline(&self.draw_system.pipeline);
-                command_buffer.bind_vertex_buffers(0, vec![(&self.draw_system.vertex_buffers[1], 0)]);
+                command_buffer
+                    .bind_vertex_buffers(0, vec![(&self.draw_system.vertex_buffers[1], 0)]);
                 command_buffer.bind_graphics_descriptor_sets(
                     &self.draw_system.pipeline_layout,
                     0,
@@ -1483,7 +1538,10 @@ impl<'a> Renderer<'a> {
             }
 
             // TODO: Can we reuse these buffers?
-            self.draw_system.command_pool.free(vec![scene_command_buffer, self.blit_command_buffer.take().unwrap()]);
+            self.draw_system.command_pool.free(vec![
+                scene_command_buffer,
+                self.blit_command_buffer.take().unwrap(),
+            ]);
 
             self.finished = true;
         }

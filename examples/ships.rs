@@ -19,6 +19,7 @@ fn main() {
             max_texture_atlas_size: Some(1024),
             logging: true,
             debugging: true,
+            debug_texture_atlas: true,
         },
     );
 
