@@ -972,7 +972,7 @@ impl JamBrushSystem {
             let swizzle = false;
             let path = path.as_ref();
             let image = match capture_type {
-                Capture::Window => unimplemented!(),
+                Capture::Window => unimplemented!("Cannot capture window contents yet. Use `Canvas` instead."),
                 Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &self.atlas_texture,
             };
