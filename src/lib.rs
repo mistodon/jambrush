@@ -49,17 +49,17 @@ struct Glyph {
     pub font_id: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Sprite {
     id: usize,
     sub_uv_offset: [f32; 2],
     sub_uv_scale: [f32; 2],
-    pixel_size: [f32; 2],
+    size: [f32; 2],
 }
 
 impl Sprite {
-    pub fn pixel_size(&self) -> [f32; 2] {
-        self.pixel_size
+    pub fn size(&self) -> [f32; 2] {
+        self.size
     }
 }
 
@@ -68,7 +68,7 @@ pub struct SpriteSheet {
     id: usize,
     width: usize,
     height: usize,
-    pixel_size: [f32; 2],
+    size: [f32; 2],
 }
 
 impl SpriteSheet {
@@ -78,7 +78,7 @@ impl SpriteSheet {
             id: sprite.id,
             width,
             height,
-            pixel_size: sprite.pixel_size,
+            size: sprite.size,
         }
     }
 
@@ -94,7 +94,7 @@ impl SpriteSheet {
             id: self.id,
             sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
             sub_uv_offset: [x as f32, y as f32],
-            pixel_size: [self.pixel_size[0] / self.width as f32, self.pixel_size[1] / self.height as f32],
+            size: [self.size[0] / self.width as f32, self.size[1] / self.height as f32],
         }
     }
 }
@@ -854,7 +854,7 @@ impl JamBrushSystem {
             id: sprite_index,
             sub_uv_scale: [1.0, 1.0],
             sub_uv_offset: [0.0, 0.0],
-            pixel_size: [size[0] as f32, size[1] as f32],
+            size: [size[0] as f32, size[1] as f32],
         }
     }
 
