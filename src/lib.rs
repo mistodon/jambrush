@@ -789,6 +789,11 @@ impl JamBrushSystem {
 
     pub fn window_resized(&mut self, _resolution: (u32, u32)) {
         self.swapchain_invalidated = true;
+
+        #[cfg(feature = "opengl")]
+        {
+            self.surface.get_window().resize(_resolution.into());
+        }
     }
 
     pub fn dpi_factor_changed(&mut self, dpi_factor: f64) {
@@ -1177,25 +1182,12 @@ impl<'a> Renderer<'a> {
                 let viewport_x = (extent.width - viewport_width) / 2;
                 let viewport_y = (extent.height - viewport_height) / 2;
 
-                // TODO: What??? Why???
-                let viewport_scale_hack = {
-                    #[cfg(feature = "opengl")]
-                    {
-                        (2.0 / draw_system.dpi_factor) as i16
-                    }
-
-                    #[cfg(not(feature = "opengl"))]
-                    {
-                        1
-                    }
-                };
-
                 let viewport = Viewport {
                     rect: Rect {
                         x: viewport_x as i16,
                         y: viewport_y as i16,
-                        w: viewport_width as i16 * viewport_scale_hack,
-                        h: viewport_height as i16 * viewport_scale_hack,
+                        w: viewport_width as i16,
+                        h: viewport_height as i16,
                     },
                     depth: 0.0..1.0,
                 };
