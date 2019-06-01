@@ -812,7 +812,7 @@ impl JamBrushSystem {
 
         let sprite_index = self.sprite_textures.len();
         let sprite_img: RgbaImage =
-            RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned()).unwrap();
+            RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned()).expect("Failed to create image from bytes");
         self.sprite_textures.push(sprite_img);
 
         let (aw, ah) = self.atlas_image.dimensions();
@@ -835,7 +835,7 @@ impl JamBrushSystem {
 
             self.sprite_regions.clear();
             for (i, texture) in self.sprite_textures.iter().enumerate() {
-                let frame = atlas_packer.get_frame(&i.to_string()).unwrap().frame;
+                let frame = atlas_packer.get_frame(&i.to_string()).expect("Failed to get frame in atlas for sprite").frame;
                 let x = frame.x as f32 / aw as f32;
                 let y = frame.y as f32 / ah as f32;
                 let w = frame.w as f32 / aw as f32;
@@ -1603,6 +1603,17 @@ impl From<([f32; 2], f32, [f32; 2])> for SpriteArgs {
             pos,
             depth,
             size: Some(size),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], f32, [f32; 4])> for SpriteArgs {
+    fn from((pos, depth, tint): ([f32; 2], f32, [f32; 4])) -> Self {
+        SpriteArgs {
+            pos,
+            depth,
+            tint,
             ..Default::default()
         }
     }

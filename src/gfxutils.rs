@@ -224,7 +224,7 @@ pub mod utils {
                 data[dest_base..dest_base + row.len()].copy_from_slice(row);
             }
 
-            device.release_mapping_writer(data).unwrap();
+            device.release_mapping_writer(data).expect("Failed to release mapping writer");
         }
 
         let submit = {
