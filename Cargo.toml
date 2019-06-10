@@ -7,6 +7,7 @@ edition = "2018"
 [features]
 default = []
 opengl = ["gfx-backend-gl"]
+dx11 = ["gfx-backend-dx11"]
 
 [dependencies]
 gfx-hal = "~0.2.0"
@@ -24,6 +25,10 @@ version = "~0.2.0"
 version = "~0.2.0"
 
 [dependencies.gfx-backend-gl]
+optional = true
+version = "~0.2.0"
+
+[dependencies.gfx-backend-dx11]
 optional = true
 version = "~0.2.0"
 
