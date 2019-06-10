@@ -17,14 +17,15 @@ pub use gfx_hal::{
     pool::{CommandPool, CommandPoolCreateFlags},
     pso::{
         AttributeDesc, BlendState, ColorBlendDesc, ColorMask, Comparison, DepthStencilDesc,
-        DepthTest, Descriptor, DescriptorRangeDesc, DescriptorSetLayoutBinding, DescriptorSetWrite,
-        DescriptorType, Element, EntryPoint, GraphicsPipelineDesc, GraphicsShaderSet,
-        PipelineStage, Rasterizer, Rect, ShaderStageFlags, StencilTest, VertexBufferDesc, Viewport,
+        DepthTest, Descriptor, DescriptorPoolCreateFlags, DescriptorRangeDesc,
+        DescriptorSetLayoutBinding, DescriptorSetWrite, DescriptorType, Element, EntryPoint,
+        GraphicsPipelineDesc, GraphicsShaderSet, PipelineStage, Rasterizer, Rect, ShaderStageFlags,
+        StencilTest, VertexBufferDesc, VertexInputRate, Viewport,
     },
     queue::{CommandQueue, Submission},
     window::Extent2D,
-    Backbuffer, DescriptorPool, Device, FrameSync, Graphics, Instance, MemoryType, PhysicalDevice,
-    Primitive, Surface, SwapImageIndex, Swapchain, SwapchainConfig,
+    DescriptorPool, Device, Graphics, Instance, MemoryType, PhysicalDevice, Primitive, Surface,
+    SwapImageIndex, Swapchain, SwapchainConfig,
 };
 
 use gfx_hal::Backend;
@@ -199,7 +200,7 @@ pub mod utils {
 
         let memory_types = physical_device.memory_properties().memory_types;
         let row_alignment_mask =
-            physical_device.limits().min_buffer_copy_pitch_alignment as u32 - 1;
+            physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
         let image_stride = 4usize;
         let row_pitch = (width * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
         let upload_size = u64::from(height * row_pitch);
@@ -224,7 +225,9 @@ pub mod utils {
                 data[dest_base..dest_base + row.len()].copy_from_slice(row);
             }
 
-            device.release_mapping_writer(data).expect("Failed to release mapping writer");
+            device
+                .release_mapping_writer(data)
+                .expect("Failed to release mapping writer");
         }
 
         let submit = {
