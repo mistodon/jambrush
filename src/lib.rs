@@ -94,7 +94,10 @@ impl SpriteSheet {
             id: self.id,
             sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
             sub_uv_offset: [x as f32, y as f32],
-            size: [self.size[0] / self.width as f32, self.size[1] / self.height as f32],
+            size: [
+                self.size[0] / self.width as f32,
+                self.size[1] / self.height as f32,
+            ],
         }
     }
 }
@@ -241,7 +244,12 @@ impl JamBrushSystem {
                 )
                 .with_vsync(true);
 
-                backend::glutin::GlWindow::new(window_builder, builder, &events_loop).unwrap()
+                backend::glutin::WindowedContext::new_windowed(
+                    window_builder,
+                    builder,
+                    &events_loop,
+                )
+                .unwrap()
             };
 
             let inner_size = window.get_inner_size().unwrap();
@@ -266,7 +274,7 @@ impl JamBrushSystem {
                 .unwrap()
         };
 
-        let (_caps, formats, _, _) = surface.compatibility(&adapter.physical_device);
+        let (_caps, formats, _) = surface.compatibility(&adapter.physical_device);
 
         let surface_color_format = {
             match formats {
@@ -396,14 +404,14 @@ impl JamBrushSystem {
             pipeline_desc.vertex_buffers.push(VertexBufferDesc {
                 binding: 0,
                 stride: std::mem::size_of::<Vertex>() as u32,
-                rate: 0,
+                rate: VertexInputRate::Vertex,
             });
 
             pipeline_desc.attributes.push(AttributeDesc {
                 location: 0,
                 binding: 0,
                 element: Element {
-                    format: Format::Rgba32Float,
+                    format: Format::Rgba32Sfloat,
                     offset: 0,
                 },
             });
@@ -412,7 +420,7 @@ impl JamBrushSystem {
                 location: 1,
                 binding: 0,
                 element: Element {
-                    format: Format::Rg32Float,
+                    format: Format::Rg32Sfloat,
                     offset: 16,
                 },
             });
@@ -421,7 +429,7 @@ impl JamBrushSystem {
                 location: 2,
                 binding: 0,
                 element: Element {
-                    format: Format::Rgb32Float,
+                    format: Format::Rgb32Sfloat,
                     offset: 24,
                 },
             });
@@ -445,6 +453,7 @@ impl JamBrushSystem {
                             count: 2,
                         },
                     ],
+                    DescriptorPoolCreateFlags::empty(),
                 )
                 .unwrap()
         };
@@ -563,7 +572,7 @@ impl JamBrushSystem {
         };
 
         let limits = adapter.physical_device.limits();
-        let atlas_size_limit = limits.max_texture_size as u32;
+        let atlas_size_limit = limits.max_image_2d_size;
         let atlas_size = config
             .max_texture_atlas_size
             .unwrap_or(atlas_size_limit)
@@ -811,8 +820,8 @@ impl JamBrushSystem {
         use texture_packer::TexturePackerConfig;
 
         let sprite_index = self.sprite_textures.len();
-        let sprite_img: RgbaImage =
-            RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned()).expect("Failed to create image from bytes");
+        let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
+            .expect("Failed to create image from bytes");
         self.sprite_textures.push(sprite_img);
 
         let (aw, ah) = self.atlas_image.dimensions();
@@ -835,7 +844,10 @@ impl JamBrushSystem {
 
             self.sprite_regions.clear();
             for (i, texture) in self.sprite_textures.iter().enumerate() {
-                let frame = atlas_packer.get_frame(&i.to_string()).expect("Failed to get frame in atlas for sprite").frame;
+                let frame = atlas_packer
+                    .get_frame(&i.to_string())
+                    .expect("Failed to get frame in atlas for sprite")
+                    .frame;
                 let x = frame.x as f32 / aw as f32;
                 let y = frame.y as f32 / ah as f32;
                 let w = frame.w as f32 / aw as f32;
@@ -937,7 +949,7 @@ impl JamBrushSystem {
         self.log("Creating swapchain");
 
         self.swapchain_invalidated = false;
-        let (caps, _, _, _) = self.surface.compatibility(&self.adapter.physical_device);
+        let (caps, _, _) = self.surface.compatibility(&self.adapter.physical_device);
 
         let mut swap_config = SwapchainConfig::from_caps(
             &caps,
@@ -975,41 +987,38 @@ impl JamBrushSystem {
                 .create_swapchain(&mut self.surface, swap_config, None)
                 .unwrap();
 
-            let (frame_images, frame_views, framebuffers) = match backbuffer {
-                Backbuffer::Images(images) => {
-                    let color_range = SubresourceRange {
-                        aspects: Aspects::COLOR,
-                        levels: 0..1,
-                        layers: 0..1,
-                    };
+            let (frame_images, frame_views, framebuffers) = {
+                let color_range = SubresourceRange {
+                    aspects: Aspects::COLOR,
+                    levels: 0..1,
+                    layers: 0..1,
+                };
 
-                    let image_views = images
-                        .iter()
-                        .map(|image| {
-                            self.device
-                                .create_image_view(
-                                    image,
-                                    ViewKind::D2,
-                                    self.surface_color_format,
-                                    Swizzle::NO,
-                                    color_range.clone(),
-                                )
-                                .unwrap()
-                        })
-                        .collect::<Vec<_>>();
+                let image_views = backbuffer
+                    .iter()
+                    .map(|image| {
+                        self.device
+                            .create_image_view(
+                                image,
+                                ViewKind::D2,
+                                self.surface_color_format,
+                                Swizzle::NO,
+                                color_range.clone(),
+                            )
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>();
 
-                    let fbos = image_views
-                        .iter()
-                        .map(|image_view| {
-                            self.device
-                                .create_framebuffer(&self.render_pass, vec![image_view], extent)
-                                .unwrap()
-                        })
-                        .collect();
+                let fbos = image_views
+                    .iter()
+                    .map(|image_view| {
+                        self.device
+                            .create_framebuffer(&self.render_pass, vec![image_view], extent)
+                            .unwrap()
+                    })
+                    .collect();
 
-                    (images, image_views, fbos)
-                }
-                Backbuffer::Framebuffer(fbo) => (vec![], vec![], vec![fbo]),
+                (backbuffer, image_views, fbos)
             };
 
             self.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
@@ -1150,9 +1159,10 @@ impl<'a> Renderer<'a> {
                 draw_system.swapchain.as_mut().unwrap();
 
             // TODO: handle failure
-            frame_index = swapchain
-                .acquire_image(!0, FrameSync::Semaphore(&draw_system.frame_semaphore))
+            let (index, _) = swapchain
+                .acquire_image(!0, Some(&draw_system.frame_semaphore), None)
                 .unwrap();
+            frame_index = index;
 
             blit_command_buffer = {
                 let mut command_buffer =
