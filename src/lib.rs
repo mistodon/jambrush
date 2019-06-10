@@ -166,7 +166,7 @@ pub struct JamBrushSystem {
 
     surface: backend::Surface,
     adapter: gfx_hal::Adapter<backend::Backend>,
-    device: backend::Device,
+    device: TDevice,
     queue_group: gfx_hal::QueueGroup<backend::Backend, Graphics>,
     command_pool: gfx_hal::CommandPool<backend::Backend, Graphics>,
     surface_color_format: Format,
