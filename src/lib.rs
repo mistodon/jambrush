@@ -1,7 +1,7 @@
 #[cfg(all(target_os = "macos", not(feature = "opengl")))]
 extern crate gfx_backend_metal as backend;
 
-#[cfg(all(windows, not(feature = "opengl")))]
+#[cfg(all(windows, not(feature = "opengl"), not(feature = "dx11")))]
 extern crate gfx_backend_dx12 as backend;
 
 #[cfg(all(unix, not(target_os = "macos"), not(feature = "opengl")))]
@@ -9,6 +9,9 @@ extern crate gfx_backend_vulkan as backend;
 
 #[cfg(feature = "opengl")]
 extern crate gfx_backend_gl as backend;
+
+#[cfg(feature = "dx11")]
+extern crate gfx_backend_dx11 as backend;
 
 mod gfxutils;
 
