@@ -1632,6 +1632,25 @@ impl From<([f32; 2], f32, [f32; 4])> for SpriteArgs {
     }
 }
 
+impl From<([f32; 2], [f32; 2])> for SpriteArgs {
+    fn from((pos, size): ([f32; 2], [f32; 2])) -> Self {
+        SpriteArgs {
+            pos,
+            size: Some(size),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<([f32; 2], [f32; 4])> for SpriteArgs {
+    fn from((pos, tint): ([f32; 2], [f32; 4])) -> Self {
+        SpriteArgs {
+            pos,
+            tint,
+            ..Default::default()
+        }
+    }
+}
 impl From<([f32; 2], f32, [f32; 2], [f32; 4])> for SpriteArgs {
     fn from((pos, depth, size, tint): ([f32; 2], f32, [f32; 2], [f32; 4])) -> Self {
         SpriteArgs {
