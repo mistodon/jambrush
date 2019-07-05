@@ -28,6 +28,12 @@ const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const MAX_SPRITE_COUNT: usize = 100000; // TODO: Make dynamic
 const MAX_DEPTH: f32 = 10000.0; // TODO: Is this the best we can do? Also we don't even _use_ depth.
 
+fn srgb_to_linear(color: [f32; 4]) -> [f32; 4] {
+    const FACTOR: f32 = 2.2;
+    let [r, g, b, a] = color;
+    [r.powf(FACTOR), g.powf(FACTOR), b.powf(FACTOR), a]
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct Vertex {
@@ -1272,6 +1278,7 @@ impl<'a> Renderer<'a> {
         let [sx, sy] = sprite.sub_uv_scale;
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
+        let tint = srgb_to_linear(args.tint);
 
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
@@ -1287,7 +1294,7 @@ impl<'a> Renderer<'a> {
                 scale,
                 [res_x as f32, res_y as f32],
             ),
-            tint: args.tint,
+            tint,
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
         };
@@ -1308,6 +1315,8 @@ impl<'a> Renderer<'a> {
 
     pub fn text_with<S: AsRef<str>>(&mut self, font: &Font, size: f32, text: S, args: &TextArgs) {
         use rusttype::{Point, Scale};
+
+        let tint = srgb_to_linear(args.tint);
 
         // TODO: scale/pos are in pixels - but should be in abstract screen-space units
         // TODO: copyin' a lotta glyphs here!
@@ -1334,7 +1343,7 @@ impl<'a> Renderer<'a> {
                 args.depth,
                 Glyph {
                     glyph,
-                    tint: args.tint,
+                    tint,
                     font_id,
                 },
             ));
