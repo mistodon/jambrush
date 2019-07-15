@@ -20,7 +20,7 @@ use std::path::Path;
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
 use texture_packer::TexturePacker;
-use winit::{EventsLoop, Window, WindowBuilder};
+use winit::{EventsLoop, WindowBuilder};
 
 use crate::gfxutils::*;
 
@@ -160,22 +160,29 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
     ]
 }
 
-// TODO: Lots. Think about resolution/rebuilding RTT texture
-pub struct JamBrushSystem {
-    drop_alarm: DropAlarm,
+struct InitInfo {
+    atlas_size: u32,
+}
 
+struct CpuSideCache {
+    sprite_textures: Vec<RgbaImage>,
+    sprite_regions: Vec<([f32; 2], [f32; 2], [f32; 2])>,
+    atlas_image: RgbaImage,
+    sprite_vertex_data: Vec<Vertex>,
+    fonts: Vec<RTFont<'static>>,
+    glyph_cache: RTCache<'static>,
+}
+
+struct GpuResources {
     #[cfg(not(feature = "opengl"))]
     _instance: backend::Instance,
 
-    #[cfg(not(feature = "opengl"))]
-    _window: Window,
-
     surface: backend::Surface,
+    surface_color_format: Format,
     adapter: gfx_hal::Adapter<backend::Backend>,
     device: TDevice,
     queue_group: gfx_hal::QueueGroup<backend::Backend, Graphics>,
     command_pool: gfx_hal::CommandPool<backend::Backend, Graphics>,
-    surface_color_format: Format,
     render_pass: TRenderPass,
     set_layout: TDescriptorSetLayout,
     pipeline_layout: TPipelineLayout,
@@ -193,18 +200,12 @@ pub struct JamBrushSystem {
     rtt_sampler: TSampler,
     rtt_framebuffer: TFramebuffer,
     texture_fence: TFence,
-    sprite_textures: Vec<RgbaImage>,
-    sprite_regions: Vec<([f32; 2], [f32; 2], [f32; 2])>,
-    atlas_image: RgbaImage,
     atlas_texture: TImage,
     atlas_memory: TMemory,
     atlas_view: TImageView,
     atlas_sampler: TSampler,
-    sprite_vertex_data: Vec<Vertex>,
     vertex_buffers: Vec<TBuffer>,
     vertex_memories: Vec<TMemory>,
-    fonts: Vec<RTFont<'static>>,
-    glyph_cache: RTCache<'static>,
     swapchain: Option<(
         backend::Swapchain,
         Extent,
@@ -213,22 +214,98 @@ pub struct JamBrushSystem {
         Vec<TFramebuffer>,
     )>,
     swapchain_invalidated: bool,
+}
+
+impl GpuResources {
+    fn destroy(self) {
+        let GpuResources {
+            device,
+            command_pool,
+            render_pass,
+            set_layout,
+            pipeline_layout,
+            pipeline,
+            desc_pool,
+            texture_semaphore,
+            scene_semaphore,
+            frame_semaphore,
+            present_semaphore,
+            rtt_image,
+            rtt_memory,
+            rtt_view,
+            rtt_sampler,
+            rtt_framebuffer,
+            texture_fence,
+            atlas_texture,
+            atlas_memory,
+            atlas_view,
+            atlas_sampler,
+            vertex_buffers,
+            vertex_memories,
+            ..
+        } = self;
+
+        unsafe {
+            device.destroy_sampler(atlas_sampler);
+            device.destroy_image_view(atlas_view);
+            device.free_memory(atlas_memory);
+            device.destroy_image(atlas_texture);
+            device.destroy_fence(texture_fence);
+            device.destroy_framebuffer(rtt_framebuffer);
+            device.destroy_sampler(rtt_sampler);
+            device.destroy_image_view(rtt_view);
+            device.free_memory(rtt_memory);
+            device.destroy_image(rtt_image);
+            for buffer in vertex_buffers {
+                device.destroy_buffer(buffer);
+            }
+            for memory in vertex_memories {
+                device.free_memory(memory);
+            }
+            device.destroy_semaphore(present_semaphore);
+            device.destroy_semaphore(frame_semaphore);
+            device.destroy_semaphore(scene_semaphore);
+            device.destroy_semaphore(texture_semaphore);
+            device.destroy_descriptor_pool(desc_pool);
+            device.destroy_graphics_pipeline(pipeline);
+            device.destroy_pipeline_layout(pipeline_layout);
+            device.destroy_descriptor_set_layout(set_layout);
+            device.destroy_command_pool(command_pool.into_raw());
+            device.destroy_render_pass(render_pass);
+        }
+    }
+}
+
+struct WindowData {
+    #[cfg(not(feature = "opengl"))]
+    _window: winit::Window,
+
     resolution: [u32; 2],
     dpi_factor: f64,
+}
+
+// TODO: Lots. Think about resolution/rebuilding RTT texture
+pub struct JamBrushSystem {
+    drop_alarm: DropAlarm,
+
+    cpu_cache: CpuSideCache,
+    gpu: Option<GpuResources>,
+    window_data: WindowData,
+
     logging: bool,
     debugging: bool,
 }
 
 impl JamBrushSystem {
-    pub fn new(
+    fn initialize_window(
         window_builder: WindowBuilder,
         events_loop: &EventsLoop,
-        config: &JamBrushConfig,
-    ) -> Self {
-        let logging = config.logging;
-
+        canvas_size: Option<[u32; 2]>,
+        logging: bool,
+        max_texture_atlas_size: Option<u32>,
+    ) -> (InitInfo, WindowData, GpuResources) {
         if logging {
-            println!("Constructing JamBrushSystem:");
+            println!("Initializing window and render context");
         }
 
         #[cfg(not(feature = "opengl"))]
@@ -268,7 +345,7 @@ impl JamBrushSystem {
             (inner_size, dpi_factor, adapter, surface)
         };
 
-        let resolution = config.canvas_size.unwrap_or_else(|| {
+        let resolution = canvas_size.unwrap_or_else(|| {
             let (window_w, window_h) = inner_size.into();
             [window_w, window_h]
         });
@@ -582,8 +659,7 @@ impl JamBrushSystem {
 
         let limits = adapter.physical_device.limits();
         let atlas_size_limit = limits.max_image_2d_size;
-        let atlas_size = config
-            .max_texture_atlas_size
+        let atlas_size = max_texture_atlas_size
             .unwrap_or(atlas_size_limit)
             .min(atlas_size_limit);
 
@@ -592,18 +668,6 @@ impl JamBrushSystem {
                 "  Texture atlas dimensions: {} x {}",
                 atlas_size, atlas_size
             );
-        }
-
-        let mut atlas_image = DynamicImage::new_rgba8(atlas_size, atlas_size).to_rgba();
-
-        if config.debug_texture_atlas {
-            for (x, y, pixel) in atlas_image.enumerate_pixels_mut() {
-                let r = x & 255;
-                let g = x >> 8;
-                let b = y & 255;
-                let a = y >> 8;
-                *pixel = image::Rgba([r as u8, g as u8, b as u8, a as u8]);
-            }
         }
 
         let texture_fence = device.create_fence(false).unwrap();
@@ -627,14 +691,6 @@ impl JamBrushSystem {
 
             (texture_image, texture_memory, texture_view, texture_sampler)
         };
-
-        let glyph_cache = RTCache::builder()
-            .dimensions(atlas_size, atlas_size / 2)
-            .position_tolerance(0.1)
-            .scale_tolerance(0.1)
-            .pad_glyphs(true)
-            .multithread(true)
-            .build();
 
         unsafe {
             device.write_descriptor_sets(vec![
@@ -670,120 +726,139 @@ impl JamBrushSystem {
 
         let swapchain = None;
 
+        (
+            InitInfo { atlas_size },
+            WindowData {
+                #[cfg(not(feature = "opengl"))]
+                _window,
+
+                resolution,
+                dpi_factor,
+            },
+            GpuResources {
+                #[cfg(not(feature = "opengl"))]
+                _instance,
+
+                surface,
+                surface_color_format,
+                adapter,
+                device,
+                queue_group,
+                command_pool,
+                render_pass,
+                set_layout,
+                pipeline_layout,
+                pipeline,
+                desc_pool,
+                sprites_desc_set,
+                blit_desc_set,
+                texture_semaphore,
+                scene_semaphore,
+                frame_semaphore,
+                present_semaphore,
+                rtt_image,
+                rtt_memory,
+                rtt_view,
+                rtt_sampler,
+                rtt_framebuffer,
+                texture_fence,
+                atlas_texture,
+                atlas_memory,
+                atlas_view,
+                atlas_sampler,
+                vertex_buffers,
+                vertex_memories,
+                swapchain,
+                swapchain_invalidated: true,
+            },
+        )
+    }
+
+    pub fn new(
+        window_builder: WindowBuilder,
+        events_loop: &EventsLoop,
+        config: &JamBrushConfig,
+    ) -> Self {
+        if config.logging {
+            println!("Constructing JamBrushSystem:");
+        }
+
+        let (init_info, window_data, gpu) = Self::initialize_window(
+            window_builder,
+            events_loop,
+            config.canvas_size,
+            config.logging,
+            config.max_texture_atlas_size,
+        );
+
+        let mut atlas_image =
+            DynamicImage::new_rgba8(init_info.atlas_size, init_info.atlas_size).to_rgba();
+
+        if config.debug_texture_atlas {
+            for (x, y, pixel) in atlas_image.enumerate_pixels_mut() {
+                let r = x & 255;
+                let g = x >> 8;
+                let b = y & 255;
+                let a = y >> 8;
+                *pixel = image::Rgba([r as u8, g as u8, b as u8, a as u8]);
+            }
+        }
+
+        let glyph_cache = RTCache::builder()
+            .dimensions(init_info.atlas_size, init_info.atlas_size / 2)
+            .position_tolerance(0.1)
+            .scale_tolerance(0.1)
+            .pad_glyphs(true)
+            .multithread(true)
+            .build();
+
         JamBrushSystem {
             drop_alarm: DropAlarm(false),
 
-            #[cfg(not(feature = "opengl"))]
-            _instance,
+            cpu_cache: CpuSideCache {
+                sprite_textures: vec![],
+                sprite_regions: vec![],
+                atlas_image,
+                sprite_vertex_data: Vec::with_capacity(MAX_SPRITE_COUNT * 6),
+                fonts: vec![],
+                glyph_cache,
+            },
 
-            #[cfg(not(feature = "opengl"))]
-            _window,
-
-            surface,
-            adapter,
-            device,
-            queue_group,
-            command_pool,
-            surface_color_format,
-            render_pass,
-            set_layout,
-            pipeline_layout,
-            pipeline,
-            desc_pool,
-            sprites_desc_set,
-            blit_desc_set,
-            texture_semaphore,
-            scene_semaphore,
-            frame_semaphore,
-            present_semaphore,
-            rtt_image,
-            rtt_memory,
-            rtt_view,
-            rtt_sampler,
-            rtt_framebuffer,
-            texture_fence,
-            sprite_textures: vec![],
-            sprite_regions: vec![],
-            atlas_image,
-            atlas_texture,
-            atlas_memory,
-            atlas_view,
-            atlas_sampler,
-            sprite_vertex_data: Vec::with_capacity(MAX_SPRITE_COUNT * 6),
-            vertex_buffers,
-            vertex_memories,
-            fonts: vec![],
-            glyph_cache,
-            swapchain,
-            swapchain_invalidated: true,
-            resolution,
-            dpi_factor,
-            logging,
+            gpu: Some(gpu),
+            window_data,
+            logging: config.logging,
             debugging: config.debugging,
         }
+    }
+
+    pub fn rebuild_window(&mut self, window_builder: WindowBuilder, events_loop: &EventsLoop) {
+        let old_gpu = self.gpu.take().unwrap();
+        old_gpu.destroy();
+
+        let (_, window_data, gpu) = Self::initialize_window(
+            window_builder,
+            events_loop,
+            Some(self.window_data.resolution),
+            self.logging,
+            Some(self.cpu_cache.atlas_image.width()),
+        );
+
+        self.window_data = window_data;
+        self.gpu = Some(gpu);
+        self.update_atlas();
     }
 
     pub fn destroy(mut self) {
         self.drop_alarm.0 = true;
 
-        if self.swapchain.is_some() {
+        if self.gpu.as_mut().unwrap().swapchain.is_some() {
             self.destroy_swapchain();
         }
 
-        let JamBrushSystem {
-            device,
-            command_pool,
-            render_pass,
-            set_layout,
-            pipeline_layout,
-            pipeline,
-            desc_pool,
-            texture_semaphore,
-            scene_semaphore,
-            frame_semaphore,
-            present_semaphore,
-            vertex_buffers,
-            vertex_memories,
-            rtt_image,
-            rtt_memory,
-            rtt_view,
-            rtt_sampler,
-            rtt_framebuffer,
-            texture_fence,
-            atlas_texture,
-            atlas_memory,
-            atlas_view,
-            atlas_sampler,
-            ..
-        } = self;
+        let JamBrushSystem { gpu, .. } = self;
 
-        unsafe {
-            device.destroy_sampler(atlas_sampler);
-            device.destroy_image_view(atlas_view);
-            device.free_memory(atlas_memory);
-            device.destroy_image(atlas_texture);
-            device.destroy_fence(texture_fence);
-            device.destroy_framebuffer(rtt_framebuffer);
-            device.destroy_sampler(rtt_sampler);
-            device.destroy_image_view(rtt_view);
-            device.free_memory(rtt_memory);
-            device.destroy_image(rtt_image);
-            for buffer in vertex_buffers {
-                device.destroy_buffer(buffer);
-            }
-            for memory in vertex_memories {
-                device.free_memory(memory);
-            }
-            device.destroy_semaphore(present_semaphore);
-            device.destroy_semaphore(frame_semaphore);
-            device.destroy_semaphore(scene_semaphore);
-            device.destroy_semaphore(texture_semaphore);
-            device.destroy_descriptor_pool(desc_pool);
-            device.destroy_graphics_pipeline(pipeline);
-            device.destroy_pipeline_layout(pipeline_layout);
-            device.destroy_descriptor_set_layout(set_layout);
-            device.destroy_command_pool(command_pool.into_raw());
-            device.destroy_render_pass(render_pass);
+        if let Some(gpu) = gpu {
+            gpu.destroy();
         }
     }
 
@@ -806,17 +881,24 @@ impl JamBrushSystem {
     }
 
     pub fn window_resized(&mut self, _resolution: (u32, u32)) {
-        self.swapchain_invalidated = true;
+        // TODO: Only invalidate if changed
+        let gpu = self.gpu.as_mut().unwrap();
+        gpu.swapchain_invalidated = true;
 
         #[cfg(feature = "opengl")]
         {
-            self.surface.get_window().resize(_resolution.into());
+            gpu.surface.get_window().resize(_resolution.into());
         }
+        self.log("Swapchain invalidated: window resized");
     }
 
     pub fn dpi_factor_changed(&mut self, dpi_factor: f64) {
-        self.dpi_factor = dpi_factor;
-        self.swapchain_invalidated = true;
+        if self.window_data.dpi_factor != dpi_factor {
+            self.window_data.dpi_factor = dpi_factor;
+            let gpu = self.gpu.as_mut().unwrap();
+            gpu.swapchain_invalidated = true;
+            self.log("Swapchain invalidated: DPI factor changed");
+        }
     }
 
     pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
@@ -828,12 +910,12 @@ impl JamBrushSystem {
     pub fn load_sprite_rgba(&mut self, size: [u32; 2], rgba_bytes: &[u8]) -> Sprite {
         use texture_packer::TexturePackerConfig;
 
-        let sprite_index = self.sprite_textures.len();
+        let sprite_index = self.cpu_cache.sprite_textures.len();
         let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
             .expect("Failed to create image from bytes");
-        self.sprite_textures.push(sprite_img);
+        self.cpu_cache.sprite_textures.push(sprite_img);
 
-        let (aw, ah) = self.atlas_image.dimensions();
+        let (aw, ah) = self.cpu_cache.atlas_image.dimensions();
         let atlas_config = TexturePackerConfig {
             max_width: aw,
             max_height: ah / 2,
@@ -843,16 +925,17 @@ impl JamBrushSystem {
             ..Default::default()
         };
 
+        // TODO: What is this O(n²) bullshit...
         {
             let mut atlas_packer = TexturePacker::new_skyline(atlas_config);
 
-            for (index, texture) in self.sprite_textures.iter().enumerate() {
+            for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
                 // TODO: ugh, string keys?
                 atlas_packer.pack_ref(index.to_string(), texture);
             }
 
-            self.sprite_regions.clear();
-            for (i, texture) in self.sprite_textures.iter().enumerate() {
+            self.cpu_cache.sprite_regions.clear();
+            for (i, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
                 let frame = atlas_packer
                     .get_frame(&i.to_string())
                     .expect("Failed to get frame in atlas for sprite")
@@ -862,15 +945,18 @@ impl JamBrushSystem {
                 let w = frame.w as f32 / aw as f32;
                 let h = frame.h as f32 / ah as f32;
                 let (pw, ph) = texture.dimensions();
-                self.sprite_regions
+                self.cpu_cache
+                    .sprite_regions
                     .push(([x, y], [w, h], [pw as f32, ph as f32]));
-                self.atlas_image.copy_from(texture, frame.x, frame.y);
+                self.cpu_cache
+                    .atlas_image
+                    .copy_from(texture, frame.x, frame.y);
             }
         }
 
         self.update_atlas();
 
-        let (uv_origin, uv_size, _) = self.sprite_regions[sprite_index];
+        let (uv_origin, uv_size, _) = self.cpu_cache.sprite_regions[sprite_index];
         self.log(format!(
             "  Sprite {} loaded: uv_origin: {:?},   uv_size: {:?}",
             sprite_index, uv_origin, uv_size
@@ -894,95 +980,87 @@ impl JamBrushSystem {
     pub fn load_font_file<P: AsRef<Path>>(&mut self, path: P) -> Font {
         let font_bytes = std::fs::read(path.as_ref()).unwrap();
         let font = RTFont::from_bytes(font_bytes).unwrap();
-        let font_index = self.fonts.len();
-        self.fonts.push(font);
+        let font_index = self.cpu_cache.fonts.len();
+        self.cpu_cache.fonts.push(font);
 
         Font { id: font_index }
     }
 
     pub fn load_font(&mut self, font_bytes: &[u8]) -> Font {
         let font = RTFont::from_bytes(font_bytes.to_owned()).unwrap();
-        let font_index = self.fonts.len();
-        self.fonts.push(font);
+        let font_index = self.cpu_cache.fonts.len();
+        self.cpu_cache.fonts.push(font);
 
         Font { id: font_index }
     }
 
     fn update_atlas(&mut self) {
+        let gpu = self.gpu.as_mut().unwrap();
         unsafe {
             utils::upload_image_data(
-                &self.device,
-                &self.adapter.physical_device,
-                &mut self.command_pool,
-                &mut self.queue_group.queues[0],
-                &self.texture_fence,
-                &self.atlas_image,
-                &self.atlas_texture,
+                &gpu.device,
+                &gpu.adapter.physical_device,
+                &mut gpu.command_pool,
+                &mut gpu.queue_group.queues[0],
+                &gpu.texture_fence,
+                &self.cpu_cache.atlas_image,
+                &gpu.atlas_texture,
             );
         }
     }
 
     fn update_swapchain(&mut self) {
-        if self.swapchain_invalidated && self.swapchain.is_some() {
+        let gpu = self.gpu.as_mut().unwrap();
+        if gpu.swapchain_invalidated && gpu.swapchain.is_some() {
             self.destroy_swapchain();
         }
 
-        if self.swapchain.is_none() {
+        let gpu = self.gpu.as_mut().unwrap();
+        if gpu.swapchain.is_none() {
             self.create_swapchain();
         }
     }
 
     fn destroy_swapchain(&mut self) {
         self.log("Destroying swapchain");
+        let gpu = self.gpu.as_mut().unwrap();
 
         let (swapchain, _extent, _frame_images, frame_views, framebuffers) =
-            self.swapchain.take().unwrap();
+            gpu.swapchain.take().unwrap();
 
         unsafe {
-            self.device.wait_idle().unwrap();
-            self.command_pool.reset();
+            gpu.device.wait_idle().unwrap();
+            gpu.command_pool.reset();
 
             for framebuffer in framebuffers {
-                self.device.destroy_framebuffer(framebuffer);
+                gpu.device.destroy_framebuffer(framebuffer);
             }
 
             for image_view in frame_views {
-                self.device.destroy_image_view(image_view);
+                gpu.device.destroy_image_view(image_view);
             }
 
-            self.device.destroy_swapchain(swapchain);
+            gpu.device.destroy_swapchain(swapchain);
         }
     }
 
     fn create_swapchain(&mut self) {
         self.log("Creating swapchain");
+        let gpu = self.gpu.as_mut().unwrap();
 
-        self.swapchain_invalidated = false;
-        let (caps, _, _) = self.surface.compatibility(&self.adapter.physical_device);
+        gpu.swapchain_invalidated = false;
+        let (caps, _, _) = gpu.surface.compatibility(&gpu.adapter.physical_device);
 
-        let mut swap_config = SwapchainConfig::from_caps(
+        let swap_config = SwapchainConfig::from_caps(
             &caps,
-            self.surface_color_format,
+            gpu.surface_color_format,
             Extent2D {
-                width: self.resolution[0],
-                height: self.resolution[1],
+                width: self.window_data.resolution[0],
+                height: self.window_data.resolution[1],
             },
         );
 
-        self.log(format!(
-            "  Surface extent: {} x {}",
-            swap_config.extent.width, swap_config.extent.height
-        ));
-        self.log(format!("  DPI factor: {}", self.dpi_factor));
-
-        // TODO: Why?? gfx-hal bug?
-        #[cfg(not(feature = "opengl"))]
-        {
-            swap_config.extent.width =
-                (f64::from(swap_config.extent.width) * self.dpi_factor).round() as u32;
-            swap_config.extent.height =
-                (f64::from(swap_config.extent.height) * self.dpi_factor).round() as u32;
-        }
+        self.log(format!("  DPI factor: {}", self.window_data.dpi_factor));
 
         self.log(format!(
             "  Swapchain dimensions: {} x {}",
@@ -990,10 +1068,11 @@ impl JamBrushSystem {
         ));
 
         unsafe {
+            let gpu = self.gpu.as_mut().unwrap();
             let extent = swap_config.extent.to_extent();
-            let (swapchain, backbuffer) = self
+            let (swapchain, backbuffer) = gpu
                 .device
-                .create_swapchain(&mut self.surface, swap_config, None)
+                .create_swapchain(&mut gpu.surface, swap_config, None)
                 .unwrap();
 
             let (frame_images, frame_views, framebuffers) = {
@@ -1006,11 +1085,11 @@ impl JamBrushSystem {
                 let image_views = backbuffer
                     .iter()
                     .map(|image| {
-                        self.device
+                        gpu.device
                             .create_image_view(
                                 image,
                                 ViewKind::D2,
-                                self.surface_color_format,
+                                gpu.surface_color_format,
                                 Swizzle::NO,
                                 color_range.clone(),
                             )
@@ -1021,8 +1100,8 @@ impl JamBrushSystem {
                 let fbos = image_views
                     .iter()
                     .map(|image_view| {
-                        self.device
-                            .create_framebuffer(&self.render_pass, vec![image_view], extent)
+                        gpu.device
+                            .create_framebuffer(&gpu.render_pass, vec![image_view], extent)
                             .unwrap()
                     })
                     .collect();
@@ -1030,16 +1109,17 @@ impl JamBrushSystem {
                 (backbuffer, image_views, fbos)
             };
 
-            self.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
+            gpu.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
         }
     }
 
     pub fn capture_to_file<P: AsRef<Path>>(&mut self, capture_type: Capture, path: P) {
+        let gpu = self.gpu.as_mut().unwrap();
         unsafe {
             use image::ColorType;
 
-            self.device.wait_idle().unwrap();
-            self.device.reset_fence(&self.texture_fence).unwrap();
+            gpu.device.wait_idle().unwrap();
+            gpu.device.reset_fence(&gpu.texture_fence).unwrap();
 
             let swizzle = false;
             let path = path.as_ref();
@@ -1047,11 +1127,11 @@ impl JamBrushSystem {
                 Capture::Window => {
                     unimplemented!("Cannot capture window contents yet. Use `Canvas` instead.")
                 }
-                Capture::Canvas => &self.rtt_image, // TODO: Clear up image/texture confusion
-                Capture::TextureAtlas => &self.atlas_texture,
+                Capture::Canvas => &gpu.rtt_image, // TODO: Clear up image/texture confusion
+                Capture::TextureAtlas => &gpu.atlas_texture,
             };
 
-            let footprint = self.device.get_image_subresource_footprint(
+            let footprint = gpu.device.get_image_subresource_footprint(
                 image,
                 Subresource {
                     aspects: Aspects::COLOR,
@@ -1060,15 +1140,11 @@ impl JamBrushSystem {
                 },
             );
             let memory_size = footprint.slice.end - footprint.slice.start;
-            let memory_types = self
-                .adapter
-                .physical_device
-                .memory_properties()
-                .memory_types;
+            let memory_types = gpu.adapter.physical_device.memory_properties().memory_types;
 
             // TODO: Are these deleted?
             let (screenshot_buffer, screenshot_memory) = utils::empty_buffer::<u8>(
-                &self.device,
+                &gpu.device,
                 &memory_types,
                 Properties::CPU_VISIBLE,
                 buffer::Usage::TRANSFER_DST,
@@ -1079,7 +1155,7 @@ impl JamBrushSystem {
             let height = memory_size as u32 / footprint.row_pitch as u32;
 
             let submit = {
-                let mut cmd_buffer = self.command_pool.acquire_command_buffer::<OneShot>();
+                let mut cmd_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
                 cmd_buffer.begin();
 
                 cmd_buffer.copy_image_to_buffer(
@@ -1108,12 +1184,12 @@ impl JamBrushSystem {
                 cmd_buffer
             };
 
-            self.queue_group.queues[0].submit_nosemaphores(&[submit], Some(&self.texture_fence));
+            gpu.queue_group.queues[0].submit_nosemaphores(&[submit], Some(&gpu.texture_fence));
 
-            self.device.wait_for_fence(&self.texture_fence, !0).unwrap();
+            gpu.device.wait_for_fence(&gpu.texture_fence, !0).unwrap();
 
             {
-                let data = self
+                let data = gpu
                     .device
                     .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
                     .expect("acquire_mapping_reader failed");
@@ -1129,7 +1205,7 @@ impl JamBrushSystem {
 
                 image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8)).unwrap();
 
-                self.device.release_mapping_reader(data);
+                gpu.device.release_mapping_reader(data);
             }
         }
     }
@@ -1156,32 +1232,32 @@ impl<'a> Renderer<'a> {
             // TODO: See next TODO
             draw_system.update_swapchain();
 
-            draw_system.command_pool.reset();
+            let gpu = draw_system.gpu.as_mut().unwrap();
+            gpu.command_pool.reset();
         }
 
         let frame_index: SwapImageIndex;
         let blit_command_buffer: CommandBuffer<backend::Backend, Graphics, OneShot, Primary>;
 
         unsafe {
-            // TODO: Can we get rid of these empty scopes with NLL?
+            let gpu = draw_system.gpu.as_mut().unwrap();
             let (swapchain, extent, _frame_images, _frame_views, framebuffers) =
-                draw_system.swapchain.as_mut().unwrap();
+                gpu.swapchain.as_mut().unwrap();
 
             // TODO: handle failure
             let (index, _) = swapchain
-                .acquire_image(!0, Some(&draw_system.frame_semaphore), None)
+                .acquire_image(!0, Some(&gpu.frame_semaphore), None)
                 .unwrap();
             frame_index = index;
 
             blit_command_buffer = {
-                let mut command_buffer =
-                    draw_system.command_pool.acquire_command_buffer::<OneShot>();
+                let mut command_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
                 command_buffer.begin();
 
-                let [vwidth, vheight] = draw_system.resolution;
+                let [vwidth, vheight] = draw_system.window_data.resolution;
 
-                let base_width = (f64::from(vwidth) * draw_system.dpi_factor) as u32;
-                let base_height = (f64::from(vheight) * draw_system.dpi_factor) as u32;
+                let base_width = (f64::from(vwidth) * draw_system.window_data.dpi_factor) as u32;
+                let base_height = (f64::from(vheight) * draw_system.window_data.dpi_factor) as u32;
 
                 let integer_scale =
                     std::cmp::min(extent.width / base_width, extent.height / base_height);
@@ -1214,18 +1290,18 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
-                command_buffer.bind_graphics_pipeline(&draw_system.pipeline);
-                command_buffer.bind_vertex_buffers(0, vec![(&draw_system.vertex_buffers[0], 0)]);
+                command_buffer.bind_graphics_pipeline(&gpu.pipeline);
+                command_buffer.bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[0], 0)]);
                 command_buffer.bind_graphics_descriptor_sets(
-                    &draw_system.pipeline_layout,
+                    &gpu.pipeline_layout,
                     0,
-                    vec![&draw_system.blit_desc_set],
+                    vec![&gpu.blit_desc_set],
                     &[],
                 );
 
                 {
                     let mut encoder = command_buffer.begin_render_pass_inline(
-                        &draw_system.render_pass,
+                        &gpu.render_pass,
                         &framebuffers[frame_index as usize],
                         viewport.rect,
                         &[ClearValue::Color(ClearColor::Float(border_clear_color))],
@@ -1260,7 +1336,7 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn center_camera(&mut self, on: [f32; 2]) {
-        let [rx, ry] = self.draw_system.resolution;
+        let [rx, ry] = self.draw_system.window_data.resolution;
         let [x, y] = on;
         self.camera([x - rx as f32 / 2.0, y - ry as f32 / 2.0]);
     }
@@ -1271,8 +1347,9 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn sprite_with(&mut self, sprite: &Sprite, args: &SpriteArgs) {
-        let (uv_origin, uv_scale, pixel_scale) = self.draw_system.sprite_regions[sprite.id];
-        let [res_x, res_y] = self.draw_system.resolution;
+        let (uv_origin, uv_scale, pixel_scale) =
+            self.draw_system.cpu_cache.sprite_regions[sprite.id];
+        let [res_x, res_y] = self.draw_system.window_data.resolution;
 
         let [px, py] = pixel_scale;
         let [sx, sy] = sprite.sub_uv_scale;
@@ -1324,7 +1401,7 @@ impl<'a> Renderer<'a> {
         let [cam_x, cam_y] = self.camera;
 
         let font_id = font.id;
-        let font = &self.draw_system.fonts[font_id];
+        let font = &self.draw_system.cpu_cache.fonts[font_id];
         let glyphs = font.layout(
             text.as_ref(),
             Scale { x: size, y: size },
@@ -1337,6 +1414,7 @@ impl<'a> Renderer<'a> {
         for glyph in glyphs {
             let glyph = glyph.standalone();
             self.draw_system
+                .cpu_cache
                 .glyph_cache
                 .queue_glyph(font_id, glyph.clone());
             self.glyphs.push((
@@ -1352,8 +1430,8 @@ impl<'a> Renderer<'a> {
 
     fn update_font_atlas(&mut self) {
         {
-            let glyph_cache = &mut self.draw_system.glyph_cache;
-            let font_atlas_image = &mut self.draw_system.atlas_image;
+            let glyph_cache = &mut self.draw_system.cpu_cache.glyph_cache;
+            let font_atlas_image = &mut self.draw_system.cpu_cache.atlas_image;
 
             let atlas_height = font_atlas_image.height();
 
@@ -1384,7 +1462,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn convert_glyphs_to_sprites(&mut self) {
-        let [res_x, res_y] = self.draw_system.resolution;
+        let [res_x, res_y] = self.draw_system.window_data.resolution;
 
         for (depth, glyph) in self.glyphs.drain(..) {
             use rusttype::Point;
@@ -1395,9 +1473,12 @@ impl<'a> Renderer<'a> {
                 font_id,
             } = glyph;
             let scale = glyph.scale();
-            let ascent = self.draw_system.fonts[font_id].v_metrics(scale).ascent;
+            let ascent = self.draw_system.cpu_cache.fonts[font_id]
+                .v_metrics(scale)
+                .ascent;
             let texcoords = self
                 .draw_system
+                .cpu_cache
                 .glyph_cache
                 .rect_for(font_id, &glyph)
                 .unwrap();
@@ -1432,10 +1513,11 @@ impl<'a> Renderer<'a> {
     pub fn finish(mut self) {
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
+        let gpu = self.draw_system.gpu.as_mut().unwrap();
 
         // Upload all sprite data to sprites_buffer
         {
-            let sprite_data = &mut self.draw_system.sprite_vertex_data;
+            let sprite_data = &mut self.draw_system.cpu_cache.sprite_vertex_data;
             sprite_data.clear();
 
             self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -1470,26 +1552,19 @@ impl<'a> Renderer<'a> {
             }
 
             unsafe {
-                utils::fill_buffer(
-                    &self.draw_system.device,
-                    &mut self.draw_system.vertex_memories[1],
-                    sprite_data,
-                );
+                utils::fill_buffer(&gpu.device, &mut gpu.vertex_memories[1], sprite_data);
             }
         }
 
         unsafe {
             let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
-                self.draw_system.swapchain.as_mut().unwrap();
+                gpu.swapchain.as_mut().unwrap();
 
             let scene_command_buffer = {
-                let mut command_buffer = self
-                    .draw_system
-                    .command_pool
-                    .acquire_command_buffer::<OneShot>();
+                let mut command_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
                 command_buffer.begin();
 
-                let [vwidth, vheight] = self.draw_system.resolution;
+                let [vwidth, vheight] = self.draw_system.window_data.resolution;
                 let viewport = Viewport {
                     rect: Rect {
                         x: 0,
@@ -1503,20 +1578,19 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
-                command_buffer.bind_graphics_pipeline(&self.draw_system.pipeline);
-                command_buffer
-                    .bind_vertex_buffers(0, vec![(&self.draw_system.vertex_buffers[1], 0)]);
+                command_buffer.bind_graphics_pipeline(&gpu.pipeline);
+                command_buffer.bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], 0)]);
                 command_buffer.bind_graphics_descriptor_sets(
-                    &self.draw_system.pipeline_layout,
+                    &gpu.pipeline_layout,
                     0,
-                    vec![&self.draw_system.sprites_desc_set],
+                    vec![&gpu.sprites_desc_set],
                     &[],
                 );
 
                 {
                     let mut encoder = command_buffer.begin_render_pass_inline(
-                        &self.draw_system.render_pass,
-                        &self.draw_system.rtt_framebuffer,
+                        &gpu.render_pass,
+                        &gpu.rtt_framebuffer,
                         viewport.rect,
                         &[ClearValue::Color(ClearColor::Float(
                             self.canvas_clear_color,
@@ -1533,37 +1607,34 @@ impl<'a> Renderer<'a> {
 
             let scene_submission = Submission {
                 command_buffers: Some(&scene_command_buffer),
-                wait_semaphores: vec![(
-                    &self.draw_system.frame_semaphore,
-                    PipelineStage::BOTTOM_OF_PIPE,
-                )],
-                signal_semaphores: vec![&self.draw_system.scene_semaphore],
+                wait_semaphores: vec![(&gpu.frame_semaphore, PipelineStage::BOTTOM_OF_PIPE)],
+                signal_semaphores: vec![&gpu.scene_semaphore],
             };
 
             let blit_submission = Submission {
                 command_buffers: Some(self.blit_command_buffer.as_ref().unwrap()),
-                wait_semaphores: vec![(
-                    &self.draw_system.scene_semaphore,
-                    PipelineStage::BOTTOM_OF_PIPE,
-                )],
-                signal_semaphores: vec![&self.draw_system.present_semaphore],
+                wait_semaphores: vec![(&gpu.scene_semaphore, PipelineStage::BOTTOM_OF_PIPE)],
+                signal_semaphores: vec![&gpu.present_semaphore],
             };
 
-            self.draw_system.queue_group.queues[0].submit(scene_submission, None);
-            self.draw_system.queue_group.queues[0].submit(blit_submission, None);
+            gpu.queue_group.queues[0].submit(scene_submission, None);
+            gpu.queue_group.queues[0].submit(blit_submission, None);
 
             let result = swapchain.present(
-                &mut self.draw_system.queue_group.queues[0],
+                &mut gpu.queue_group.queues[0],
                 self.frame_index,
-                vec![&self.draw_system.present_semaphore],
+                vec![&gpu.present_semaphore],
             );
 
             if result.is_err() {
-                self.draw_system.swapchain_invalidated = true;
+                gpu.swapchain_invalidated = true;
+                self.draw_system
+                    .log("Swapchain invalidated: present failed");
             }
 
             // TODO: Can we reuse these buffers?
-            self.draw_system.command_pool.free(vec![
+            let gpu = self.draw_system.gpu.as_mut().unwrap();
+            gpu.command_pool.free(vec![
                 scene_command_buffer,
                 self.blit_command_buffer.take().unwrap(),
             ]);
