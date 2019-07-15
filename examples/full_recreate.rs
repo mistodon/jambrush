@@ -2,7 +2,7 @@ extern crate image;
 extern crate jambrush;
 extern crate winit;
 
-use winit::{VirtualKeyCode, Event, EventsLoop, WindowBuilder, WindowEvent};
+use winit::{Event, EventsLoop, VirtualKeyCode, WindowBuilder, WindowEvent};
 
 struct Context {
     events_loop: EventsLoop,
@@ -43,8 +43,8 @@ fn main() {
             );
 
             let white_sprite = jambrush.load_sprite_file(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/assets/examples/white.png"
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/examples/white.png"
             ));
 
             let inconsolata = {
@@ -65,7 +65,12 @@ fn main() {
 
         let mut quitting = false;
 
-        let Context { events_loop, jambrush, white_sprite, inconsolata } = context.as_mut().unwrap();
+        let Context {
+            events_loop,
+            jambrush,
+            white_sprite,
+            inconsolata,
+        } = context.as_mut().unwrap();
 
         events_loop.poll_events(|event| {
             if let Event::WindowEvent { event, .. } = event {
@@ -77,14 +82,12 @@ fn main() {
                     WindowEvent::Resized(res) => {
                         jambrush.window_resized(res.into());
                     }
-                    WindowEvent::KeyboardInput { input, .. } => {
-                        match input.virtual_keycode {
-                            Some(VirtualKeyCode::Key1) => target_scale = 1,
-                            Some(VirtualKeyCode::Key2) => target_scale = 2,
-                            Some(VirtualKeyCode::Key3) => target_scale = 3,
-                            _ => ()
-                        }
-                    }
+                    WindowEvent::KeyboardInput { input, .. } => match input.virtual_keycode {
+                        Some(VirtualKeyCode::Key1) => target_scale = 1,
+                        Some(VirtualKeyCode::Key2) => target_scale = 2,
+                        Some(VirtualKeyCode::Key3) => target_scale = 3,
+                        _ => (),
+                    },
                     _ => {}
                 }
             }

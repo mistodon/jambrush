@@ -3,11 +3,11 @@ extern crate jambrush;
 extern crate winit;
 
 fn main() {
-    use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
+    use winit::{ElementState, Event, EventsLoop, VirtualKeyCode, WindowBuilder, WindowEvent};
 
     let mut events_loop = EventsLoop::new();
     let window_builder = WindowBuilder::new()
-        .with_title("JamBrush - Gamma test")
+        .with_title("JamBrush - Rebuild window")
         .with_dimensions((256, 144).into());
 
     let mut jambrush = jambrush::JamBrushSystem::new(
@@ -26,10 +26,6 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/assets/examples/white.png"
     ));
-    let chart_sprite = jambrush.load_sprite_file(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/examples/gamma_test.png"
-    ));
 
     let inconsolata = {
         let path = concat!(
@@ -41,6 +37,7 @@ fn main() {
 
     loop {
         let mut quitting = false;
+        let mut target_scale = None;
 
         events_loop.poll_events(|event| {
             if let Event::WindowEvent { event, .. } = event {
@@ -52,10 +49,28 @@ fn main() {
                     WindowEvent::Resized(res) => {
                         jambrush.window_resized(res.into());
                     }
+                    WindowEvent::KeyboardInput { input, .. }
+                        if input.state == ElementState::Pressed =>
+                    {
+                        match input.virtual_keycode {
+                            Some(VirtualKeyCode::Key1) => target_scale = Some(1),
+                            Some(VirtualKeyCode::Key2) => target_scale = Some(2),
+                            Some(VirtualKeyCode::Key3) => target_scale = Some(3),
+                            _ => (),
+                        }
+                    }
                     _ => {}
                 }
             }
         });
+
+        if let Some(scale) = target_scale {
+            let window_builder = WindowBuilder::new()
+                .with_title("JamBrush - Rebuild window")
+                .with_dimensions((256 * scale, 144 * scale).into());
+
+            jambrush.rebuild_window(window_builder, &events_loop);
+        }
 
         if quitting {
             break;
@@ -63,31 +78,23 @@ fn main() {
 
         // Render
         {
-            let mut renderer =
-                jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], Some([0.1, 0.1, 0.1, 1.0]));
+            let mut renderer = jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], None);
 
             renderer.text(
                 &inconsolata,
                 14.0,
-                "Colors in texture:",
-                ([2.0, 2.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
-            );
-
-            renderer.sprite(&chart_sprite, [0.0, 32.0]);
-
-            renderer.text(
-                &inconsolata,
-                14.0,
-                "Colors via tint:",
+                "Rebuild window test:",
                 ([2.0, 72.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
             );
 
-            for i in 0..8 {
-                let green = (i + 1) as f32 / 8.0;
-                let x = i as f32 * 32.0;
+            renderer.text(
+                &inconsolata,
+                14.0,
+                "Press 1, 2, or 3 to resize window.",
+                ([2.0, 90.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
+            );
 
-                renderer.sprite(&white_sprite, ([x, 104.0], [0.0, green, 0.0, 1.0]));
-            }
+            renderer.sprite(&white_sprite, ([64.0, 64.0], [0.5, 0.5, 0.5, 1.0]));
 
             renderer.finish();
         }

@@ -27,7 +27,7 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/assets/examples/wee_ship.png"
     ));
-    let beastie_sprite = jambrush.load_sprite_file(concat!(
+    let _beastie_sprite = jambrush.load_sprite_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/assets/examples/beastie.png"
     ));
