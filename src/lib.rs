@@ -15,7 +15,7 @@ extern crate gfx_backend_dx11 as backend;
 
 mod gfxutils;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
@@ -83,6 +83,19 @@ pub struct SpriteSheet {
 impl SpriteSheet {
     pub fn new(sprite: &Sprite, size_in_sprites: [usize; 2]) -> Self {
         let [width, height] = size_in_sprites;
+        SpriteSheet {
+            id: sprite.id,
+            width,
+            height,
+            size: sprite.size,
+        }
+    }
+
+    pub fn from_size(sprite: &Sprite, sprite_size: [usize; 2]) -> Self {
+        let [sx, sy] = sprite_size;
+        let [w, h] = sprite.size;
+        let width = w as usize / sx;
+        let height = h as usize / sy;
         SpriteSheet {
             id: sprite.id,
             width,
@@ -294,6 +307,8 @@ pub struct JamBrushSystem {
 
     logging: bool,
     debugging: bool,
+    recording: Option<PathBuf>,
+    recorded_frames: usize,
 }
 
 impl JamBrushSystem {
@@ -828,6 +843,8 @@ impl JamBrushSystem {
             window_data,
             logging: config.logging,
             debugging: config.debugging,
+            recording: None,
+            recorded_frames: 0,
         }
     }
 
@@ -1208,6 +1225,21 @@ impl JamBrushSystem {
                 gpu.device.release_mapping_reader(data);
             }
         }
+    }
+
+    pub fn recording(&mut self) -> bool {
+        self.recording.is_some()
+    }
+
+    pub fn start_recording<P: AsRef<Path>>(&mut self, output_dir: P) {
+        self.log(format!("Started recording frames to: {}", output_dir.as_ref().display()));
+        std::fs::create_dir_all(output_dir.as_ref()).expect("Failed to create output directory for video frame capture");
+        self.recording = Some(output_dir.as_ref().to_owned());
+    }
+
+    pub fn stop_recording(&mut self) {
+        self.log("Stopped recording frames");
+        self.recording = None;
     }
 }
 
@@ -1640,6 +1672,12 @@ impl<'a> Renderer<'a> {
             ]);
 
             self.finished = true;
+        }
+
+        if let Some(mut path) = self.draw_system.recording.clone() {
+            path.push(format!("frame_{:06}.png", self.draw_system.recorded_frames));
+            self.draw_system.capture_to_file(Capture::Canvas, &path);
+            self.draw_system.recorded_frames += 1;
         }
     }
 }
