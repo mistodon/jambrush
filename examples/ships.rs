@@ -8,7 +8,7 @@ fn main() {
 
     let mut events_loop = EventsLoop::new();
     let window_builder = WindowBuilder::new()
-        .with_title("JamBrush - Happy path")
+        .with_title("JamBrush - Ships")
         .with_dimensions((256, 144).into());
 
     let mut jambrush = jambrush::JamBrushSystem::new(
@@ -100,6 +100,9 @@ fn main() {
         }
 
         // Render
+        let stats = jambrush.render_stats();
+        let stats = format!("{:#?}", stats);
+        let stats = stats.lines();
         {
             let mut renderer =
                 jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], Some([0.1, 0.1, 0.1, 1.0]));
@@ -115,6 +118,15 @@ fn main() {
                 &format!("Score: {}", 0),
                 ([0.0, 0.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
             );
+
+            for (i, line) in stats.enumerate() {
+                renderer.text(
+                    &inconsolata,
+                    14.0,
+                    line,
+                    ([0.0, 15.0 + 15.0 * i as f32], 0.0, [1.0, 1.0, 0.0, 1.0]),
+                );
+            }
 
             renderer.finish();
         }

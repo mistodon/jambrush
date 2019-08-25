@@ -302,7 +302,10 @@ struct WindowData {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RenderStats {
+    pub frame_time: Duration,
     pub frame_render_time: Duration,
+    pub time_for_first_submit: Duration,
+    pub present_failed: bool,
 }
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
@@ -319,6 +322,7 @@ pub struct JamBrushSystem {
     recorded_frames: usize,
     sprite_atlas_outdated: bool,
     render_stats: RenderStats,
+    time_at_last_frame: Instant,
 }
 
 impl JamBrushSystem {
@@ -857,6 +861,7 @@ impl JamBrushSystem {
             recorded_frames: 0,
             sprite_atlas_outdated: false,
             render_stats: RenderStats::default(),
+            time_at_last_frame: Instant::now(),
         }
     }
 
@@ -1102,6 +1107,8 @@ impl JamBrushSystem {
                 height: self.window_data.resolution[1],
             },
         );
+
+        self.log(format!("  Present mode: {:?}", swap_config.present_mode));
 
         self.log(format!("  DPI factor: {}", self.window_data.dpi_factor));
 
@@ -1583,6 +1590,8 @@ impl<'a> Renderer<'a> {
 
     pub fn finish(mut self) {
         let time_at_frame_start = Instant::now();
+        self.draw_system.render_stats.frame_time = self.draw_system.time_at_last_frame.elapsed();
+        self.draw_system.time_at_last_frame = time_at_frame_start;
 
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
@@ -1691,7 +1700,10 @@ impl<'a> Renderer<'a> {
                 signal_semaphores: vec![&gpu.present_semaphore],
             };
 
+            let before = Instant::now();
             gpu.queue_group.queues[0].submit(scene_submission, None);
+            self.draw_system.render_stats.time_for_first_submit = before.elapsed();
+
             gpu.queue_group.queues[0].submit(blit_submission, None);
 
             let result = swapchain.present(
@@ -1700,10 +1712,13 @@ impl<'a> Renderer<'a> {
                 vec![&gpu.present_semaphore],
             );
 
-            if result.is_err() {
-                gpu.swapchain_invalidated = true;
-                self.draw_system
-                    .log("Swapchain invalidated: present failed");
+            match result {
+                Ok(_) => self.draw_system.render_stats.present_failed = false,
+                Err(_) => {
+                    gpu.swapchain_invalidated = true;
+                    self.draw_system
+                        .log("Swapchain invalidated: present failed");
+                }
             }
 
             // TODO: Can we reuse these buffers?
