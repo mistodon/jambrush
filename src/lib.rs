@@ -15,7 +15,10 @@ extern crate gfx_backend_dx11 as backend;
 
 mod gfxutils;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
@@ -297,6 +300,11 @@ struct WindowData {
     dpi_factor: f64,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RenderStats {
+    pub frame_render_time: Duration,
+}
+
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
     drop_alarm: DropAlarm,
@@ -310,6 +318,7 @@ pub struct JamBrushSystem {
     recording: Option<PathBuf>,
     recorded_frames: usize,
     sprite_atlas_outdated: bool,
+    render_stats: RenderStats,
 }
 
 impl JamBrushSystem {
@@ -847,6 +856,7 @@ impl JamBrushSystem {
             recording: None,
             recorded_frames: 0,
             sprite_atlas_outdated: false,
+            render_stats: RenderStats::default(),
         }
     }
 
@@ -1264,6 +1274,10 @@ impl JamBrushSystem {
         self.log("Stopped recording frames");
         self.recording = None;
     }
+
+    pub fn render_stats(&self) -> RenderStats {
+        self.render_stats
+    }
 }
 
 pub struct Renderer<'a> {
@@ -1488,6 +1502,7 @@ impl<'a> Renderer<'a> {
         let font_atlas_image = &mut self.draw_system.cpu_cache.atlas_image;
 
         let atlas_height = font_atlas_image.height();
+        let mut modified = false;
 
         glyph_cache
             .cache_queued(|dest_rect, data| {
@@ -1507,12 +1522,14 @@ impl<'a> Renderer<'a> {
 
                 let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
                 font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
+                modified = true;
             })
             .unwrap();
 
         // TODO: Use a separate font texture, in a texture array
-        // TODO: Also, is this done every frame??
-        self.draw_system.upload_atlas_texture();
+        if modified {
+            self.draw_system.upload_atlas_texture();
+        }
     }
 
     fn convert_glyphs_to_sprites(&mut self) {
@@ -1565,8 +1582,11 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn finish(mut self) {
+        let time_at_frame_start = Instant::now();
+
         self.update_font_atlas();
         self.convert_glyphs_to_sprites();
+
         let gpu = self.draw_system.gpu.as_mut().unwrap();
 
         // Upload all sprite data to sprites_buffer
@@ -1701,6 +1721,8 @@ impl<'a> Renderer<'a> {
             self.draw_system.capture_to_file(Capture::Canvas, &path);
             self.draw_system.recorded_frames += 1;
         }
+
+        self.draw_system.render_stats.frame_render_time = time_at_frame_start.elapsed();
     }
 }
 
