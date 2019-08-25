@@ -155,7 +155,7 @@ pub struct JamBrushConfig {
 pub enum Capture {
     TextureAtlas,
     Canvas,
-    Window,
+    // TODO: Window,
 }
 
 fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32; 4]; 4] {
@@ -309,6 +309,7 @@ pub struct JamBrushSystem {
     debugging: bool,
     recording: Option<PathBuf>,
     recorded_frames: usize,
+    sprite_atlas_outdated: bool,
 }
 
 impl JamBrushSystem {
@@ -845,6 +846,7 @@ impl JamBrushSystem {
             debugging: config.debugging,
             recording: None,
             recorded_frames: 0,
+            sprite_atlas_outdated: false,
         }
     }
 
@@ -862,7 +864,7 @@ impl JamBrushSystem {
 
         self.window_data = window_data;
         self.gpu = Some(gpu);
-        self.update_atlas();
+        self.upload_atlas_texture();
     }
 
     pub fn destroy(mut self) {
@@ -890,6 +892,10 @@ impl JamBrushSystem {
         canvas_clear_color: [f32; 4],
         border_clear_color: Option<[f32; 4]>,
     ) -> Renderer {
+        if self.sprite_atlas_outdated {
+            self.update_sprite_atlas();
+        }
+
         Renderer::new(
             self,
             canvas_clear_color,
@@ -925,58 +931,19 @@ impl JamBrushSystem {
     }
 
     pub fn load_sprite_rgba(&mut self, size: [u32; 2], rgba_bytes: &[u8]) -> Sprite {
-        use texture_packer::TexturePackerConfig;
-
         let sprite_index = self.cpu_cache.sprite_textures.len();
-        let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
-            .expect("Failed to create image from bytes");
-        self.cpu_cache.sprite_textures.push(sprite_img);
-
-        let (aw, ah) = self.cpu_cache.atlas_image.dimensions();
-        let atlas_config = TexturePackerConfig {
-            max_width: aw,
-            max_height: ah / 2,
-            allow_rotation: false,
-            trim: false,
-            texture_outlines: self.debugging,
-            ..Default::default()
-        };
-
-        // TODO: What is this O(n²) bullshit...
         {
-            let mut atlas_packer = TexturePacker::new_skyline(atlas_config);
-
-            for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
-                // TODO: ugh, string keys?
-                atlas_packer.pack_ref(index.to_string(), texture);
-            }
-
-            self.cpu_cache.sprite_regions.clear();
-            for (i, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
-                let frame = atlas_packer
-                    .get_frame(&i.to_string())
-                    .expect("Failed to get frame in atlas for sprite")
-                    .frame;
-                let x = frame.x as f32 / aw as f32;
-                let y = frame.y as f32 / ah as f32;
-                let w = frame.w as f32 / aw as f32;
-                let h = frame.h as f32 / ah as f32;
-                let (pw, ph) = texture.dimensions();
-                self.cpu_cache
-                    .sprite_regions
-                    .push(([x, y], [w, h], [pw as f32, ph as f32]));
-                self.cpu_cache
-                    .atlas_image
-                    .copy_from(texture, frame.x, frame.y);
-            }
+            let sprite_img: RgbaImage =
+                RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
+                    .expect("Failed to create image from bytes");
+            self.cpu_cache.sprite_textures.push(sprite_img);
         }
 
-        self.update_atlas();
+        self.sprite_atlas_outdated = true;
 
-        let (uv_origin, uv_size, _) = self.cpu_cache.sprite_regions[sprite_index];
         self.log(format!(
-            "  Sprite {} loaded: uv_origin: {:?},   uv_size: {:?}",
-            sprite_index, uv_origin, uv_size
+            "Sprite {} ({} x {}) loaded and queued for upload",
+            sprite_index, size[0], size[1]
         ));
 
         Sprite {
@@ -1011,7 +978,56 @@ impl JamBrushSystem {
         Font { id: font_index }
     }
 
-    fn update_atlas(&mut self) {
+    fn update_sprite_atlas(&mut self) {
+        use texture_packer::TexturePackerConfig;
+
+        self.log("Updating sprite atlas...");
+
+        let (aw, ah) = self.cpu_cache.atlas_image.dimensions();
+        let atlas_config = TexturePackerConfig {
+            max_width: aw,
+            max_height: ah / 2,
+            allow_rotation: false,
+            trim: false,
+            texture_outlines: self.debugging,
+            ..Default::default()
+        };
+
+        {
+            let mut atlas_packer = TexturePacker::new_skyline(atlas_config);
+
+            for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
+                // TODO: ugh, string keys?
+                atlas_packer.pack_ref(index.to_string(), texture);
+            }
+
+            self.cpu_cache.sprite_regions.clear();
+            for (i, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
+                let frame = atlas_packer
+                    .get_frame(&i.to_string())
+                    .expect("Failed to get frame in atlas for sprite")
+                    .frame;
+                let x = frame.x as f32 / aw as f32;
+                let y = frame.y as f32 / ah as f32;
+                let w = frame.w as f32 / aw as f32;
+                let h = frame.h as f32 / ah as f32;
+                let (pw, ph) = texture.dimensions();
+                self.cpu_cache
+                    .sprite_regions
+                    .push(([x, y], [w, h], [pw as f32, ph as f32]));
+                self.cpu_cache
+                    .atlas_image
+                    .copy_from(texture, frame.x, frame.y);
+            }
+        }
+
+        self.upload_atlas_texture();
+        self.sprite_atlas_outdated = false;
+
+        self.log("Updated sprite atlas.");
+    }
+
+    fn upload_atlas_texture(&mut self) {
         let gpu = self.gpu.as_mut().unwrap();
         unsafe {
             utils::upload_image_data(
@@ -1130,20 +1146,14 @@ impl JamBrushSystem {
         }
     }
 
-    pub fn capture_to_file<P: AsRef<Path>>(&mut self, capture_type: Capture, path: P) {
+    pub fn capture_image(&mut self, capture_type: Capture) -> ([u32; 2], Vec<u8>) {
         let gpu = self.gpu.as_mut().unwrap();
         unsafe {
-            use image::ColorType;
-
             gpu.device.wait_idle().unwrap();
             gpu.device.reset_fence(&gpu.texture_fence).unwrap();
 
             let swizzle = false;
-            let path = path.as_ref();
             let image = match capture_type {
-                Capture::Window => {
-                    unimplemented!("Cannot capture window contents yet. Use `Canvas` instead.")
-                }
                 Capture::Canvas => &gpu.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &gpu.atlas_texture,
             };
@@ -1205,7 +1215,7 @@ impl JamBrushSystem {
 
             gpu.device.wait_for_fence(&gpu.texture_fence, !0).unwrap();
 
-            {
+            let image_bytes = {
                 let data = gpu
                     .device
                     .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
@@ -1220,11 +1230,20 @@ impl JamBrushSystem {
                     }
                 }
 
-                image::save_buffer(path, &image_bytes, width, height, ColorType::RGBA(8)).unwrap();
-
                 gpu.device.release_mapping_reader(data);
-            }
+
+                image_bytes
+            };
+
+            ([width, height], image_bytes)
         }
+    }
+
+    pub fn capture_to_file<P: AsRef<Path>>(&mut self, capture_type: Capture, path: P) {
+        use image::ColorType;
+
+        let (size, image_bytes) = self.capture_image(capture_type);
+        image::save_buffer(path, &image_bytes, size[0], size[1], ColorType::RGBA(8)).unwrap();
     }
 
     pub fn recording(&mut self) -> bool {
@@ -1232,8 +1251,12 @@ impl JamBrushSystem {
     }
 
     pub fn start_recording<P: AsRef<Path>>(&mut self, output_dir: P) {
-        self.log(format!("Started recording frames to: {}", output_dir.as_ref().display()));
-        std::fs::create_dir_all(output_dir.as_ref()).expect("Failed to create output directory for video frame capture");
+        self.log(format!(
+            "Started recording frames to: {}",
+            output_dir.as_ref().display()
+        ));
+        std::fs::create_dir_all(output_dir.as_ref())
+            .expect("Failed to create output directory for video frame capture");
         self.recording = Some(output_dir.as_ref().to_owned());
     }
 
@@ -1461,36 +1484,35 @@ impl<'a> Renderer<'a> {
     }
 
     fn update_font_atlas(&mut self) {
-        {
-            let glyph_cache = &mut self.draw_system.cpu_cache.glyph_cache;
-            let font_atlas_image = &mut self.draw_system.cpu_cache.atlas_image;
+        let glyph_cache = &mut self.draw_system.cpu_cache.glyph_cache;
+        let font_atlas_image = &mut self.draw_system.cpu_cache.atlas_image;
 
-            let atlas_height = font_atlas_image.height();
+        let atlas_height = font_atlas_image.height();
 
-            glyph_cache
-                .cache_queued(|dest_rect, data| {
-                    use rusttype::Point;
+        glyph_cache
+            .cache_queued(|dest_rect, data| {
+                use rusttype::Point;
 
-                    let Point { x, y } = dest_rect.min;
-                    let w = dest_rect.width();
-                    let h = dest_rect.height();
+                let Point { x, y } = dest_rect.min;
+                let w = dest_rect.width();
+                let h = dest_rect.height();
 
-                    let mut rgba_buffer = vec![0; data.len() * 4];
-                    for (&alpha, rgba) in data.into_iter().zip(rgba_buffer.chunks_mut(4)) {
-                        rgba[0] = 255;
-                        rgba[1] = 255;
-                        rgba[2] = 255;
-                        rgba[3] = alpha;
-                    }
+                let mut rgba_buffer = vec![0; data.len() * 4];
+                for (&alpha, rgba) in data.into_iter().zip(rgba_buffer.chunks_mut(4)) {
+                    rgba[0] = 255;
+                    rgba[1] = 255;
+                    rgba[2] = 255;
+                    rgba[3] = alpha;
+                }
 
-                    let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
-                    font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
-                })
-                .unwrap();
-        }
+                let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
+                font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
+            })
+            .unwrap();
 
         // TODO: Use a separate font texture, in a texture array
-        self.draw_system.update_atlas();
+        // TODO: Also, is this done every frame??
+        self.draw_system.upload_atlas_texture();
     }
 
     fn convert_glyphs_to_sprites(&mut self) {

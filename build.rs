@@ -6,7 +6,7 @@ fn main() {
     compile_shaders().unwrap();
 }
 
-fn compile_shaders() -> Result<(), Box<Error>> {
+fn compile_shaders() -> Result<(), Box<dyn Error>> {
     use glsl_to_spirv::ShaderType;
 
     // Create destination path if necessary
