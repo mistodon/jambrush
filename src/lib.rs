@@ -294,7 +294,7 @@ impl GpuResources {
 
 struct WindowData {
     #[cfg(not(feature = "opengl"))]
-    _window: winit::Window,
+    window: winit::Window,
 
     resolution: [u32; 2],
     dpi_factor: f64,
@@ -304,7 +304,6 @@ struct WindowData {
 pub struct RenderStats {
     pub frame_time: Duration,
     pub frame_render_time: Duration,
-    pub time_for_first_submit: Duration,
     pub present_failed: bool,
 }
 
@@ -338,7 +337,7 @@ impl JamBrushSystem {
         }
 
         #[cfg(not(feature = "opengl"))]
-        let (_window, inner_size, dpi_factor, _instance, surface, adapter) = {
+        let (window, inner_size, dpi_factor, _instance, surface, adapter) = {
             let window = window_builder.build(events_loop).unwrap();
             let inner_size = window.get_inner_size().unwrap();
             let dpi_factor = window.get_hidpi_factor();
@@ -759,7 +758,7 @@ impl JamBrushSystem {
             InitInfo { atlas_size },
             WindowData {
                 #[cfg(not(feature = "opengl"))]
-                _window,
+                window,
 
                 resolution,
                 dpi_factor,
@@ -916,6 +915,18 @@ impl JamBrushSystem {
             canvas_clear_color,
             border_clear_color.unwrap_or(canvas_clear_color),
         )
+    }
+
+    pub fn window(&self) -> &winit::Window {
+        #[cfg(not(feature = "opengl"))]
+        {
+            &self.window_data.window
+        }
+
+        #[cfg(feature = "opengl")]
+        {
+            unimplemented!("Cannot retrieve Window with OpenGL backing just yet")
+        }
     }
 
     pub fn window_resized(&mut self, _resolution: (u32, u32)) {
@@ -1700,10 +1711,7 @@ impl<'a> Renderer<'a> {
                 signal_semaphores: vec![&gpu.present_semaphore],
             };
 
-            let before = Instant::now();
             gpu.queue_group.queues[0].submit(scene_submission, None);
-            self.draw_system.render_stats.time_for_first_submit = before.elapsed();
-
             gpu.queue_group.queues[0].submit(blit_submission, None);
 
             let result = swapchain.present(
