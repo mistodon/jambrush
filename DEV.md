@@ -1,20 +1,7 @@
 Next
 ===
 
-Debugging tools!
-
-- [x] Optional logging
-- [x] Configuration object for JamDrawSystem
-    - [x] Max texture atlas size
-- [ ] Output screen capture
-- [ ] Output texture atlas
-    - [ ] Optionally with red outlines
-- [ ] Builder pattern for Renderer properties? (clear color, camera, etc.)
-
-Ergonomics:
-
-- [ ] load_sprite should take raw image bytes, not decoded image bytes
-- [ ] load_sprite_raw can take RGBA bytes + size
+- [ ] Take pos/cursor out of *Args struct
 
 Library
 ===
