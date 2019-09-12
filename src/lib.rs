@@ -21,7 +21,7 @@ use std::{
 };
 
 use image::{DynamicImage, GenericImage, RgbaImage};
-use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, PositionedGlyph};
+use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, GlyphId, PositionedGlyph};
 use texture_packer::TexturePacker;
 use winit::{EventsLoop, WindowBuilder};
 
@@ -64,8 +64,8 @@ struct Glyph {
 #[derive(Debug, Clone)]
 pub struct Sprite {
     id: usize,
-    sub_uv_offset: [f32; 2],
-    sub_uv_scale: [f32; 2],
+    grid: [u32; 2],
+    cell: [u32; 2],
     size: [f32; 2],
 }
 
@@ -78,27 +78,28 @@ impl Sprite {
 #[derive(Debug)]
 pub struct SpriteSheet {
     id: usize,
-    width: usize,
-    height: usize,
+    // TODO: Use an array for dimensions
+    width: u32,
+    height: u32,
     size: [f32; 2],
 }
 
 impl SpriteSheet {
-    pub fn new(sprite: &Sprite, size_in_sprites: [usize; 2]) -> Self {
+    pub fn from_shape(sprite: &Sprite, size_in_sprites: [usize; 2]) -> Self {
         let [width, height] = size_in_sprites;
         SpriteSheet {
             id: sprite.id,
-            width,
-            height,
+            width: width as u32,
+            height: height as u32,
             size: sprite.size,
         }
     }
 
-    pub fn from_size(sprite: &Sprite, sprite_size: [usize; 2]) -> Self {
+    pub fn from_size(sprite: &Sprite, sprite_size: [u32; 2]) -> Self {
         let [sx, sy] = sprite_size;
         let [w, h] = sprite.size;
-        let width = w as usize / sx;
-        let height = h as usize / sy;
+        let width = w as u32 / sx;
+        let height = h as u32 / sy;
         SpriteSheet {
             id: sprite.id,
             width,
@@ -110,15 +111,15 @@ impl SpriteSheet {
     pub fn sprite(&self, coord: [usize; 2]) -> Sprite {
         let [x, y] = coord;
         debug_assert!(
-            x < self.width && y < self.height,
+            x < self.width as usize && y < self.height as usize,
             "Sprite {:?} is out of the {:?} range allowed by this SpriteSheet.",
             [x, y],
             [self.width, self.height]
         );
         Sprite {
             id: self.id,
-            sub_uv_scale: [1.0 / self.width as f32, 1.0 / self.height as f32],
-            sub_uv_offset: [x as f32, y as f32],
+            grid: [self.width as u32, self.height as u32],
+            cell: [coord[0] as u32, coord[1] as u32],
             size: [
                 self.size[0] / self.width as f32,
                 self.size[1] / self.height as f32,
@@ -127,7 +128,7 @@ impl SpriteSheet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Font {
     id: usize,
 }
@@ -302,9 +303,65 @@ struct WindowData {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RenderStats {
+    pub frame_count: usize,
     pub frame_time: Duration,
     pub frame_render_time: Duration,
     pub present_failed: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Cursor {
+    pos: [f32; 2],
+    previous: Option<(Font, f32, GlyphId)>,
+    start_x: f32,
+}
+
+impl From<[f32; 2]> for Cursor {
+    fn from(pos: [f32; 2]) -> Self {
+        Cursor {
+            pos,
+            previous: None,
+            start_x: pos[0],
+        }
+    }
+}
+
+pub trait IntoLines<'a> {
+    type Iter: Iterator<Item = &'a str>;
+
+    fn into_lines(&self) -> Self::Iter;
+}
+
+impl<'a> IntoLines<'a> for &'a str {
+    type Iter = std::str::Lines<'a>;
+
+    fn into_lines(&self) -> Self::Iter {
+        self.lines()
+    }
+}
+
+impl<'a> IntoLines<'a> for &'a String {
+    type Iter = std::str::Lines<'a>;
+
+    fn into_lines(&self) -> Self::Iter {
+        self.lines()
+    }
+}
+
+impl<'a> IntoLines<'a> for &'a [&'a str] {
+    type Iter = std::iter::Copied<std::slice::Iter<'a, &'a str>>;
+
+    fn into_lines(&self) -> Self::Iter {
+        self.iter().copied()
+    }
+}
+
+impl<'a> IntoLines<'a> for &'a Vec<&'a str> {
+    type Iter = std::iter::Copied<std::slice::Iter<'a, &'a str>>;
+
+    fn into_lines(&self) -> Self::Iter {
+        self.iter().copied()
+    }
 }
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
@@ -950,20 +1007,12 @@ impl JamBrushSystem {
         }
     }
 
-    pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
-        let image_bytes = std::fs::read(path.as_ref()).unwrap();
-
-        self.load_sprite(&image_bytes)
-    }
-
     pub fn load_sprite_rgba(&mut self, size: [u32; 2], rgba_bytes: &[u8]) -> Sprite {
         let sprite_index = self.cpu_cache.sprite_textures.len();
-        {
-            let sprite_img: RgbaImage =
-                RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
-                    .expect("Failed to create image from bytes");
-            self.cpu_cache.sprite_textures.push(sprite_img);
-        }
+
+        let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
+            .expect("Failed to create image from bytes");
+        self.cpu_cache.sprite_textures.push(sprite_img);
 
         self.sprite_atlas_outdated = true;
 
@@ -974,8 +1023,8 @@ impl JamBrushSystem {
 
         Sprite {
             id: sprite_index,
-            sub_uv_scale: [1.0, 1.0],
-            sub_uv_offset: [0.0, 0.0],
+            grid: [1, 1],
+            cell: [0, 0],
             size: [size[0] as f32, size[1] as f32],
         }
     }
@@ -985,6 +1034,41 @@ impl JamBrushSystem {
         let (w, h) = image.dimensions();
 
         self.load_sprite_rgba([w, h], &image)
+    }
+
+    pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
+        let image_bytes = std::fs::read(path.as_ref()).unwrap();
+
+        self.load_sprite(&image_bytes)
+    }
+
+    pub fn reload_sprite_rgba(&mut self, sprite: &Sprite, size: [u32; 2], rgba_bytes: &[u8]) {
+        let [w, h] = sprite.size;
+        let [w, h] = [w as u32, h as u32];
+
+        let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
+            .expect("Failed to reload image from bytes");
+        self.cpu_cache.sprite_textures[sprite.id] = sprite_img;
+
+        self.sprite_atlas_outdated = true;
+
+        self.log(format!(
+            "Sprite {} ({} x {}) reloaded and queued for upload",
+            sprite.id, w, h
+        ));
+    }
+
+    pub fn reload_sprite(&mut self, sprite: &Sprite, image_bytes: &[u8]) {
+        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let (w, h) = image.dimensions();
+
+        self.reload_sprite_rgba(sprite, [w, h], &image);
+    }
+
+    pub fn reload_sprite_file<P: AsRef<Path>>(&mut self, sprite: &Sprite, path: P) {
+        let image_bytes = std::fs::read(path.as_ref()).unwrap();
+
+        self.reload_sprite(sprite, &image_bytes);
     }
 
     pub fn load_font_file<P: AsRef<Path>>(&mut self, path: P) -> Font {
@@ -1439,15 +1523,15 @@ impl<'a> Renderer<'a> {
         let [res_x, res_y] = self.draw_system.window_data.resolution;
 
         let [px, py] = pixel_scale;
-        let [sx, sy] = sprite.sub_uv_scale;
+        let [sx, sy] = [1.0 / sprite.grid[0] as f32, 1.0 / sprite.grid[1] as f32];
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
         let tint = srgb_to_linear(args.tint);
 
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
-        let u0 = uv_origin[0] + uw * sprite.sub_uv_offset[0];
-        let v0 = uv_origin[1] + uh * sprite.sub_uv_offset[1];
+        let u0 = uv_origin[0] + uw * sprite.cell[0] as f32;
+        let v0 = uv_origin[1] + uh * sprite.cell[1] as f32;
 
         let [pos_x, pos_y] = args.pos;
         let [cam_x, cam_y] = self.camera;
@@ -1466,52 +1550,218 @@ impl<'a> Renderer<'a> {
         self.sprites.push((args.depth, data));
     }
 
-    pub fn text<T: Into<TextArgs>, S: AsRef<str>>(
+    pub fn text_with<'t, S: IntoLines<'t>>(
+        &mut self,
+        font: &Font,
+        size: f32,
+        text: S,
+        args: &TextArgs,
+    ) -> Cursor {
+        let lines = text.into_lines();
+
+        self.prepare_glyphs(lines, font, size, args)
+    }
+
+    pub fn text<'t, T: Into<TextArgs>, S: IntoLines<'t>>(
         &mut self,
         font: &Font,
         size: f32,
         text: S,
         args: T,
-    ) {
+    ) -> Cursor {
         let args = args.into();
-        self.text_with(font, size, text, &args);
+        self.text_with(font, size, text, &args)
     }
 
-    pub fn text_with<S: AsRef<str>>(&mut self, font: &Font, size: f32, text: S, args: &TextArgs) {
+    // TODO: Write some unit tests for this
+    // - Refactor the insides to a standalone method
+    // - Use a trait to make it generic over Fonts + MockFonts
+    // - Make it less dependent on literal Glyph(Id)s
+    // - Test it with a "monospace" mock font
+    pub fn reflow_text<'t, C: Into<Cursor>>(
+        &mut self,
+        font: &Font,
+        size: f32,
+        cursor: C,
+        max_x: f32,
+        text: &'t str,
+    ) -> (Cursor, Vec<&'t str>) {
+        use rusttype::Scale;
+
+        const WORD_BREAKS: &[char] = &[' ', '\n'];
+
+        let font_handle = font;
+        let font_id = font_handle.id;
+        let font = &self.draw_system.cpu_cache.fonts[font_id];
+        let scale = Scale { x: size, y: size };
+        let line_height = {
+            let metrics = font.v_metrics(scale);
+            (metrics.ascent - metrics.descent) + metrics.line_gap
+        };
+
+        let mut cursor = cursor.into();
+        let mut previous = cursor.previous.map(|prev| prev.2);
+        let mut result = vec![];
+
+        let mut line_start = 0;
+        let mut word_start = None;
+        let mut last_word_end = None;
+        let mut word_lead = 0.0;
+        let mut word_width = 0.0;
+        let mut chars = text.char_indices();
+
+        loop {
+            let next = chars.next();
+            let done = next.is_none();
+            let mut line_end = None;
+            let mut newline = None;
+
+            let (index, ch) = next.unwrap_or((text.len(), '\n'));
+            let glyph = font.glyph(ch);
+            let glyph = glyph.scaled(scale);
+            let kerning = previous
+                .map(|prev| font.pair_kerning(scale, prev, glyph.id()))
+                .unwrap_or(0.0);
+            let advance = match ch {
+                '\n' => 0.0,
+                _ => glyph.h_metrics().advance_width,
+            };
+
+            if WORD_BREAKS.contains(&ch) {
+                // TODO: Handle case where entire first word is too wide
+                if cursor.pos[0] < max_x && (cursor.pos[0] + word_width + word_lead) >= max_x {
+                    cursor.pos[0] = cursor.start_x + word_width;
+                    cursor.pos[1] += line_height;
+                    line_end = last_word_end;
+                } else {
+                    cursor.pos[0] += word_lead + word_width;
+                }
+
+                if ch == '\n' {
+                    newline = Some(index);
+                }
+
+                last_word_end = Some(index);
+                word_start = None;
+                word_width = 0.0;
+                word_lead = advance;
+            } else {
+                word_width += advance;
+
+                if word_start.is_some() {
+                    word_width += kerning;
+                } else {
+                    word_start = Some(index);
+                    word_lead += kerning;
+                }
+            }
+
+            previous = Some(glyph.id());
+
+            if let Some(end) = line_end {
+                result.push(&text[line_start..end]);
+                line_start = end + 1; // NOTE: Assumes line break is 1 byte
+            }
+
+            if done {
+                result.push(&text[line_start..]);
+                break;
+            } else if let Some(end) = newline {
+                result.push(&text[line_start..end]);
+                line_start = end + 1;
+                cursor.pos[0] = cursor.start_x;
+                cursor.pos[1] += line_height;
+            }
+        }
+
+        let result_cursor = Cursor {
+            pos: cursor.pos,
+            previous: previous.map(|glyph_id| (font_handle.clone(), size, glyph_id)),
+            start_x: cursor.start_x,
+        };
+
+        (result_cursor, result)
+    }
+
+    fn prepare_glyphs<'t, I: Iterator<Item = &'t str>>(
+        &mut self,
+        mut lines: I,
+        font: &Font,
+        size: f32,
+        args: &TextArgs,
+    ) -> Cursor {
         use rusttype::{Point, Scale};
 
-        let tint = srgb_to_linear(args.tint);
-
-        // TODO: scale/pos are in pixels - but should be in abstract screen-space units
+        // TODO: scale/pos are in pixels
+        //  - but should be in abstract screen-space units
         // TODO: copyin' a lotta glyphs here!
+        // TODO: Use prev_glyph for pre-kerning
 
+        let tint = srgb_to_linear(args.tint);
         let [cam_x, cam_y] = self.camera;
 
-        let font_id = font.id;
+        let font_handle = font;
+        let font_id = font_handle.id;
         let font = &self.draw_system.cpu_cache.fonts[font_id];
-        let glyphs = font.layout(
-            text.as_ref(),
-            Scale { x: size, y: size },
-            Point {
-                x: args.pos[0] - cam_x,
-                y: args.pos[1] - cam_y,
-            },
-        );
+        let scale = Scale { x: size, y: size };
 
-        for glyph in glyphs {
-            let glyph = glyph.standalone();
-            self.draw_system
-                .cpu_cache
-                .glyph_cache
-                .queue_glyph(font_id, glyph.clone());
-            self.glyphs.push((
-                args.depth,
-                Glyph {
-                    glyph,
-                    tint,
-                    font_id,
-                },
-            ));
+        let line_height = {
+            let metrics = font.v_metrics(scale);
+            (metrics.ascent - metrics.descent) + metrics.line_gap
+        };
+
+        let mut cursor = args.cursor.clone();
+        let mut previous = cursor.previous.map(|prev| prev.2);
+
+        let mut line = lines.next();
+
+        loop {
+            if let Some(line) = line {
+                for glyph in font.glyphs_for(line.chars()) {
+                    let glyph = glyph.scaled(scale);
+                    if let Some(previous) = previous {
+                        cursor.pos[0] += font.pair_kerning(scale, previous, glyph.id());
+                    }
+
+                    let advance = glyph.h_metrics().advance_width;
+                    let glyph = glyph.positioned(Point {
+                        x: cursor.pos[0] - cam_x,
+                        y: cursor.pos[1] - cam_y,
+                    });
+                    previous = Some(glyph.id());
+                    cursor.pos[0] += advance;
+
+                    let glyph = glyph.standalone();
+                    self.draw_system
+                        .cpu_cache
+                        .glyph_cache
+                        .queue_glyph(font_id, glyph.clone());
+
+                    self.glyphs.push((
+                        args.depth,
+                        Glyph {
+                            glyph,
+                            tint,
+                            font_id,
+                        },
+                    ));
+                }
+            }
+
+            line = lines.next();
+            if line.is_some() {
+                cursor.pos[0] = cursor.start_x;
+                cursor.pos[1] += line_height;
+                previous = None;
+            } else {
+                break;
+            }
+        }
+
+        Cursor {
+            pos: cursor.pos,
+            previous: previous.map(|glyph_id| (font_handle.clone(), size, glyph_id)),
+            start_x: cursor.start_x,
         }
     }
 
@@ -1746,6 +1996,7 @@ impl<'a> Renderer<'a> {
         }
 
         self.draw_system.render_stats.frame_render_time = time_at_frame_start.elapsed();
+        self.draw_system.render_stats.frame_count += 1;
     }
 }
 
@@ -1848,9 +2099,9 @@ impl From<([f32; 2], f32, [f32; 2], [f32; 4])> for SpriteArgs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TextArgs {
-    pub pos: [f32; 2],
+    pub cursor: Cursor,
     pub depth: f32,
     pub tint: [f32; 4],
 }
@@ -1858,36 +2109,46 @@ pub struct TextArgs {
 impl Default for TextArgs {
     fn default() -> Self {
         TextArgs {
-            pos: [0.0, 0.0],
+            cursor: Cursor::default(),
             depth: 0.0,
             tint: WHITE,
         }
     }
 }
 
-impl From<[f32; 2]> for TextArgs {
-    fn from(pos: [f32; 2]) -> Self {
+impl<P: Into<Cursor>> From<P> for TextArgs {
+    fn from(pos: P) -> Self {
         TextArgs {
-            pos,
+            cursor: pos.into(),
             ..Default::default()
         }
     }
 }
 
-impl From<([f32; 2], f32)> for TextArgs {
-    fn from((pos, depth): ([f32; 2], f32)) -> Self {
+impl<P: Into<Cursor>> From<(P, f32)> for TextArgs {
+    fn from((pos, depth): (P, f32)) -> Self {
         TextArgs {
-            pos,
+            cursor: pos.into(),
             depth,
             ..Default::default()
         }
     }
 }
 
-impl From<([f32; 2], f32, [f32; 4])> for TextArgs {
-    fn from((pos, depth, tint): ([f32; 2], f32, [f32; 4])) -> Self {
+impl<P: Into<Cursor>> From<(P, [f32; 4])> for TextArgs {
+    fn from((pos, tint): (P, [f32; 4])) -> Self {
         TextArgs {
-            pos,
+            cursor: pos.into(),
+            tint,
+            ..Default::default()
+        }
+    }
+}
+
+impl<P: Into<Cursor>> From<(P, f32, [f32; 4])> for TextArgs {
+    fn from((pos, depth, tint): (P, f32, [f32; 4])) -> Self {
+        TextArgs {
+            cursor: pos.into(),
             depth,
             tint,
             ..Default::default()
