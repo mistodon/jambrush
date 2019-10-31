@@ -311,7 +311,7 @@ pub struct RenderStats {
 
 #[derive(Debug, Default, Clone)]
 pub struct Cursor {
-    pos: [f32; 2],
+    pub pos: [f32; 2],
     previous: Option<(Font, f32, GlyphId)>,
     start_x: f32,
 }
