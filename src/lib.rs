@@ -313,7 +313,7 @@ pub struct RenderStats {
 pub struct Cursor {
     pub pos: [f32; 2],
     previous: Option<(Font, f32, GlyphId)>,
-    start_x: f32,
+    pub start_x: f32,
 }
 
 impl From<[f32; 2]> for Cursor {
