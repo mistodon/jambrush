@@ -1,18 +1,19 @@
-extern crate image;
-extern crate jambrush;
-extern crate winit;
-
 fn main() {
-    use winit::{ElementState, Event, EventsLoop, VirtualKeyCode, WindowBuilder, WindowEvent};
+    use winit::{
+        dpi::LogicalSize,
+        event::{ElementState, VirtualKeyCode},
+        event_loop::EventLoop,
+        window::WindowBuilder,
+    };
 
-    let mut events_loop = EventsLoop::new();
+    let event_loop = EventLoop::new();
     let window_builder = WindowBuilder::new()
         .with_title("JamBrush - Rebuild window")
-        .with_dimensions((256, 144).into());
+        .with_inner_size(LogicalSize::<u32>::from((256, 144)));
 
     let mut jambrush = jambrush::JamBrushSystem::new(
         window_builder,
-        &events_loop,
+        &event_loop,
         &jambrush::JamBrushConfig {
             canvas_size: Some([256, 144]),
             max_texture_atlas_size: Some(1024),
@@ -35,70 +36,65 @@ fn main() {
         jambrush.load_font_file(path)
     };
 
-    loop {
-        let mut quitting = false;
-        let mut target_scale = None;
+    let mut target_scale = None;
 
-        events_loop.poll_events(|event| {
-            if let Event::WindowEvent { event, .. } = event {
-                match event {
-                    WindowEvent::CloseRequested => quitting = true,
-                    WindowEvent::HiDpiFactorChanged(dpi) => {
-                        jambrush.dpi_factor_changed(dpi);
-                    }
-                    WindowEvent::Resized(res) => {
-                        jambrush.window_resized(res.into());
-                    }
-                    WindowEvent::KeyboardInput { input, .. }
-                        if input.state == ElementState::Pressed =>
-                    {
-                        match input.virtual_keycode {
-                            Some(VirtualKeyCode::Key1) => target_scale = Some(1),
-                            Some(VirtualKeyCode::Key2) => target_scale = Some(2),
-                            Some(VirtualKeyCode::Key3) => target_scale = Some(3),
-                            _ => (),
-                        }
-                    }
-                    _ => {}
+    event_loop.run(move |event, target, control_flow| {
+        use winit::event::{Event, WindowEvent};
+        use winit::event_loop::ControlFlow;
+
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::Resized(dims) => {
+                    jambrush.window_resized(dims.into());
                 }
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    jambrush.dpi_factor_changed(scale_factor);
+                }
+                WindowEvent::KeyboardInput { input, .. }
+                    if input.state == ElementState::Pressed =>
+                {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::Key1) => target_scale = Some(1),
+                        Some(VirtualKeyCode::Key2) => target_scale = Some(2),
+                        Some(VirtualKeyCode::Key3) => target_scale = Some(3),
+                        _ => (),
+                    }
+                }
+                _ => (),
+            },
+            Event::MainEventsCleared => {
+                if let Some(scale) = target_scale.take() {
+                    let window_builder = WindowBuilder::new()
+                        .with_title("JamBrush - Rebuild window")
+                        .with_inner_size(LogicalSize::<u32>::from((256 * scale, 144 * scale)));
+
+                    jambrush.rebuild_window(window_builder, &target);
+                }
+                jambrush.window().request_redraw();
             }
-        });
+            Event::RedrawRequested(_) => {
+                let mut renderer = jambrush.start_rendering([0., 0., 0., 1.], None);
 
-        if let Some(scale) = target_scale {
-            let window_builder = WindowBuilder::new()
-                .with_title("JamBrush - Rebuild window")
-                .with_dimensions((256 * scale, 144 * scale).into());
+                renderer.text(
+                    &inconsolata,
+                    14.,
+                    "Rebuild window test:",
+                    ([2., 72.], 0., [1., 1., 1., 1.]),
+                );
 
-            jambrush.rebuild_window(window_builder, &events_loop);
+                renderer.text(
+                    &inconsolata,
+                    14.,
+                    "Press 1, 2, or 3 to resize window.",
+                    ([2., 90.], 0., [1., 1., 1., 1.]),
+                );
+
+                renderer.sprite(&white_sprite, ([64., 64.], [0.5, 0.5, 0.5, 1.]));
+
+                renderer.finish();
+            }
+            _ => {}
         }
-
-        if quitting {
-            break;
-        }
-
-        // Render
-        {
-            let mut renderer = jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], None);
-
-            renderer.text(
-                &inconsolata,
-                14.0,
-                "Rebuild window test:",
-                ([2.0, 72.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
-            );
-
-            renderer.text(
-                &inconsolata,
-                14.0,
-                "Press 1, 2, or 3 to resize window.",
-                ([2.0, 90.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
-            );
-
-            renderer.sprite(&white_sprite, ([64.0, 64.0], [0.5, 0.5, 0.5, 1.0]));
-
-            renderer.finish();
-        }
-    }
-
-    jambrush.destroy();
+    });
 }

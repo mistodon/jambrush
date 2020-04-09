@@ -1,18 +1,14 @@
-extern crate image;
-extern crate jambrush;
-extern crate winit;
-
 fn main() {
-    use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
+    use winit::{dpi::LogicalSize, event_loop::EventLoop, window::WindowBuilder};
 
-    let mut events_loop = EventsLoop::new();
+    let event_loop = EventLoop::new();
     let window_builder = WindowBuilder::new()
         .with_title("JamBrush - Gamma test")
-        .with_dimensions((256, 144).into());
+        .with_inner_size(LogicalSize::<u32>::from((256, 144_u32)));
 
     let mut jambrush = jambrush::JamBrushSystem::new(
         window_builder,
-        &events_loop,
+        &event_loop,
         &jambrush::JamBrushConfig {
             canvas_size: Some([256, 144]),
             max_texture_atlas_size: Some(1024),
@@ -39,59 +35,54 @@ fn main() {
         jambrush.load_font_file(path)
     };
 
-    loop {
-        let mut quitting = false;
+    event_loop.run(move |event, _, control_flow| {
+        use winit::event::{Event, WindowEvent};
+        use winit::event_loop::ControlFlow;
 
-        events_loop.poll_events(|event| {
-            if let Event::WindowEvent { event, .. } = event {
-                match event {
-                    WindowEvent::CloseRequested => quitting = true,
-                    WindowEvent::HiDpiFactorChanged(dpi) => {
-                        jambrush.dpi_factor_changed(dpi);
-                    }
-                    WindowEvent::Resized(res) => {
-                        jambrush.window_resized(res.into());
-                    }
-                    _ => {}
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::Resized(dims) => {
+                    jambrush.window_resized(dims.into());
                 }
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    jambrush.dpi_factor_changed(scale_factor);
+                }
+                _ => (),
+            },
+            Event::MainEventsCleared => {
+                jambrush.window().request_redraw();
             }
-        });
+            Event::RedrawRequested(_) => {
+                let mut renderer =
+                    jambrush.start_rendering([0., 0., 0., 1.], Some([0.1, 0.1, 0.1, 1.]));
 
-        if quitting {
-            break;
-        }
+                renderer.text(
+                    &inconsolata,
+                    14.,
+                    "Colors in texture:",
+                    ([2., 2.], 0., [1., 1., 1., 1.]),
+                );
 
-        // Render
-        {
-            let mut renderer =
-                jambrush.start_rendering([0.0, 0.0, 0.0, 1.0], Some([0.1, 0.1, 0.1, 1.0]));
+                renderer.sprite(&chart_sprite, [0., 32.]);
 
-            renderer.text(
-                &inconsolata,
-                14.0,
-                "Colors in texture:",
-                ([2.0, 2.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
-            );
+                renderer.text(
+                    &inconsolata,
+                    14.,
+                    "Colors via tint:",
+                    ([2., 72.], 0., [1., 1., 1., 1.]),
+                );
 
-            renderer.sprite(&chart_sprite, [0.0, 32.0]);
+                for i in 0..8 {
+                    let green = (i + 1) as f32 / 8.;
+                    let x = i as f32 * 32.;
 
-            renderer.text(
-                &inconsolata,
-                14.0,
-                "Colors via tint:",
-                ([2.0, 72.0], 0.0, [1.0, 1.0, 1.0, 1.0]),
-            );
+                    renderer.sprite(&white_sprite, ([x, 104.], [0., green, 0., 1.]));
+                }
 
-            for i in 0..8 {
-                let green = (i + 1) as f32 / 8.0;
-                let x = i as f32 * 32.0;
-
-                renderer.sprite(&white_sprite, ([x, 104.0], [0.0, green, 0.0, 1.0]));
+                renderer.finish();
             }
-
-            renderer.finish();
+            _ => {}
         }
-    }
-
-    jambrush.destroy();
+    });
 }
