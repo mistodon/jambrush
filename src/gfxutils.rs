@@ -1,73 +1,63 @@
 pub use gfx_hal::{
-    adapter::MemoryTypeId,
-    buffer,
+    adapter::{Adapter, MemoryType, PhysicalDevice},
+    buffer::{self, SubRange},
     command::{
-        BufferImageCopy, ClearColor, ClearDepthStencil, ClearValue, CommandBuffer, OneShot, Primary,
+        BufferImageCopy, ClearColor, ClearDepthStencil, ClearValue, CommandBuffer,
+        CommandBufferFlags, Level, SubpassContents,
     },
+    device::Device,
     format::{Aspects, ChannelType, Format, Swizzle},
     image::{
-        self as img, Access, Extent, Filter, Layout, Offset, Subresource, SubresourceLayers,
-        SubresourceRange, ViewCapabilities, ViewKind, WrapMode,
+        self as img, Access, Extent, Filter, Layout, Offset, SamplerDesc, Subresource,
+        SubresourceLayers, SubresourceRange, ViewCapabilities, ViewKind, WrapMode,
     },
-    memory::{Barrier, Dependencies, Properties},
+    memory::{Barrier, Dependencies, Properties, Segment},
     pass::{
         Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDependency,
-        SubpassDesc, SubpassRef,
+        SubpassDesc,
     },
     pool::{CommandPool, CommandPoolCreateFlags},
     pso::{
         AttributeDesc, BlendState, ColorBlendDesc, ColorMask, Comparison, DepthStencilDesc,
-        DepthTest, Descriptor, DescriptorPoolCreateFlags, DescriptorRangeDesc,
+        DepthTest, Descriptor, DescriptorPool, DescriptorPoolCreateFlags, DescriptorRangeDesc,
         DescriptorSetLayoutBinding, DescriptorSetWrite, DescriptorType, Element, EntryPoint,
-        GraphicsPipelineDesc, GraphicsShaderSet, PipelineStage, Rasterizer, Rect, ShaderStageFlags,
-        StencilTest, VertexBufferDesc, VertexInputRate, Viewport,
+        GraphicsPipelineDesc, GraphicsShaderSet, ImageDescriptorType, PipelineStage, Primitive,
+        Rasterizer, Rect, ShaderStageFlags, StencilTest, VertexBufferDesc, VertexInputRate,
+        Viewport,
     },
-    queue::{CommandQueue, Submission},
-    window::Extent2D,
-    DescriptorPool, Device, Graphics, Instance, MemoryType, PhysicalDevice, Primitive, Surface,
-    SwapImageIndex, Swapchain, SwapchainConfig,
+    queue::{family::QueueGroup, CommandQueue, Submission},
+    window::{Extent2D, PresentationSurface, Surface, SwapchainConfig},
+    Instance,
 };
 
 use gfx_hal::Backend;
 use image::RgbaImage;
 
 pub type TBuffer = <::backend::Backend as Backend>::Buffer;
-pub type TCommandPool = CommandPool<::backend::Backend, Graphics>;
-pub type TCommandQueue = CommandQueue<::backend::Backend, Graphics>;
+pub type TCommandBuffer = <::backend::Backend as Backend>::CommandBuffer;
+pub type TCommandPool = <::backend::Backend as Backend>::CommandPool;
+pub type TCommandQueue = <::backend::Backend as Backend>::CommandQueue;
 pub type TDescriptorPool = <::backend::Backend as Backend>::DescriptorPool;
 pub type TDescriptorSet = <::backend::Backend as Backend>::DescriptorSet;
 pub type TDescriptorSetLayout = <::backend::Backend as Backend>::DescriptorSetLayout;
 pub type TDevice = <::backend::Backend as Backend>::Device;
 pub type TFence = <::backend::Backend as Backend>::Fence;
+pub type TFramebuffer = <::backend::Backend as Backend>::Framebuffer;
 pub type TGraphicsPipeline = <::backend::Backend as Backend>::GraphicsPipeline;
 pub type TImage = <::backend::Backend as Backend>::Image;
 pub type TImageView = <::backend::Backend as Backend>::ImageView;
 pub type TMemory = <::backend::Backend as Backend>::Memory;
 pub type TPhysicalDevice = <::backend::Backend as Backend>::PhysicalDevice;
 pub type TPipelineLayout = <::backend::Backend as Backend>::PipelineLayout;
+pub type TQueueGroup = QueueGroup<::backend::Backend>;
 pub type TRenderPass = <::backend::Backend as Backend>::RenderPass;
-pub type TSemaphore = <::backend::Backend as Backend>::Semaphore;
 pub type TSampler = <::backend::Backend as Backend>::Sampler;
-pub type TFramebuffer = <::backend::Backend as Backend>::Framebuffer;
+pub type TSemaphore = <::backend::Backend as Backend>::Semaphore;
+pub type TSurface = <::backend::Backend as Backend>::Surface;
+pub type TSurfaceImage = <TSurface as PresentationSurface<::backend::Backend>>::SwapchainImage;
 
 pub mod utils {
     use super::*;
-
-    pub fn _push_constant_data<T>(data: &T) -> &[u32] {
-        let size = _push_constant_size::<T>();
-        let ptr = data as *const T as *const u32;
-
-        unsafe { ::std::slice::from_raw_parts(ptr, size) }
-    }
-
-    pub fn _push_constant_size<T>() -> usize {
-        const PUSH_CONSTANT_SIZE: usize = ::std::mem::size_of::<u32>();
-        let type_size = ::std::mem::size_of::<T>();
-
-        assert!(type_size % PUSH_CONSTANT_SIZE == 0);
-
-        type_size / PUSH_CONSTANT_SIZE
-    }
 
     pub unsafe fn empty_buffer<Item>(
         device: &TDevice,
@@ -100,17 +90,23 @@ pub mod utils {
 
     pub unsafe fn fill_buffer<Item: Copy>(
         device: &TDevice,
-        buffer_memory: &mut TMemory,
+        buffer_memory: &TMemory,
         items: &[Item],
     ) {
-        let stride = ::std::mem::size_of::<Item>() as u64;
-        let buffer_len = items.len() as u64 * stride;
+        let stride = ::std::mem::size_of::<Item>();
+        let buffer_len = items.len() * stride;
 
-        let mut dest = device
-            .acquire_mapping_writer::<Item>(&buffer_memory, 0..buffer_len)
-            .unwrap();
-        dest.copy_from_slice(items);
-        device.release_mapping_writer(dest).unwrap();
+        let mapped_memory = device
+            .map_memory(&buffer_memory, Segment::ALL)
+            .expect("map_memory failed");
+
+        std::ptr::copy_nonoverlapping(items.as_ptr() as *const u8, mapped_memory, buffer_len);
+
+        device
+            .flush_mapped_memory_ranges(vec![(buffer_memory, Segment::ALL)])
+            .expect("flush_mapped_memory_ranges failed");
+
+        device.unmap_memory(&buffer_memory);
     }
 
     pub unsafe fn create_buffer<Item: Copy>(
@@ -214,25 +210,31 @@ pub mod utils {
         );
 
         {
-            let mut data = device
-                .acquire_mapping_writer::<u8>(&image_upload_memory, 0..upload_size)
-                .expect("acquire_mapping_writer failed");
+            let mapped_memory = device
+                .map_memory(&image_upload_memory, Segment::ALL)
+                .expect("map_memory failed");
 
             for y in 0..height as usize {
                 let row = &(**src_image)[y * (width as usize) * image_stride
                     ..(y + 1) * (width as usize) * image_stride];
-                let dest_base = y * row_pitch as usize;
-                data[dest_base..dest_base + row.len()].copy_from_slice(row);
+
+                std::ptr::copy_nonoverlapping(
+                    row.as_ptr(),
+                    mapped_memory.offset(y as isize * row_pitch as isize),
+                    width as usize * image_stride,
+                );
             }
 
             device
-                .release_mapping_writer(data)
-                .expect("Failed to release mapping writer");
+                .flush_mapped_memory_ranges(vec![(&image_upload_memory, Segment::ALL)])
+                .expect("flush_mapped_memory_ranges failed");
+
+            device.unmap_memory(&image_upload_memory);
         }
 
         let submit = {
-            let mut cmd_buffer = command_pool.acquire_command_buffer::<OneShot>();
-            cmd_buffer.begin();
+            let mut cmd_buffer = command_pool.allocate_one(Level::Primary);
+            cmd_buffer.begin_primary(CommandBufferFlags::empty());
 
             let image_barrier = Barrier::Image {
                 states: (Access::empty(), Layout::Undefined)
@@ -296,7 +298,7 @@ pub mod utils {
             cmd_buffer
         };
 
-        queue.submit_nosemaphores(Some(&submit), Some(&fence));
+        queue.submit_without_semaphores(Some(&submit), Some(&fence));
 
         device.wait_for_fence(&fence, !0).unwrap();
 

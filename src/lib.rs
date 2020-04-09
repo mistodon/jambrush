@@ -13,9 +13,25 @@ extern crate gfx_backend_gl as backend;
 #[cfg(feature = "dx11")]
 extern crate gfx_backend_dx11 as backend;
 
+#[cfg(all(target_os = "macos", not(feature = "opengl")))]
+const BACKEND: &str = "metal";
+
+#[cfg(all(windows, not(feature = "opengl"), not(feature = "dx11")))]
+const BACKEND: &str = "dx12";
+
+#[cfg(all(unix, not(target_os = "macos"), not(feature = "opengl")))]
+const BACKEND: &str = "vulkan";
+
+#[cfg(feature = "opengl")]
+const BACKEND: &str = "gl";
+
+#[cfg(feature = "dx11")]
+const BACKEND: &str = "dx11";
+
 mod gfxutils;
 
 use std::{
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -23,13 +39,17 @@ use std::{
 use image::{DynamicImage, GenericImage, RgbaImage};
 use rusttype::{gpu_cache::Cache as RTCache, Font as RTFont, GlyphId, PositionedGlyph};
 use texture_packer::TexturePacker;
-use winit::{EventsLoop, WindowBuilder};
+use winit::{
+    dpi::{LogicalSize, PhysicalSize},
+    event_loop::EventLoopWindowTarget,
+    window::WindowBuilder,
+};
 
 use crate::gfxutils::*;
 
-const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const WHITE: [f32; 4] = [1., 1., 1., 1.];
 const MAX_SPRITE_COUNT: usize = 100000; // TODO: Make dynamic
-const MAX_DEPTH: f32 = 10000.0; // TODO: Is this the best we can do? Also we don't even _use_ depth.
+const MAX_DEPTH: f32 = 10000.; // TODO: Is this the best we can do? Also we don't even _use_ depth.
 
 fn srgb_to_linear(color: [f32; 4]) -> [f32; 4] {
     const FACTOR: f32 = 2.2;
@@ -133,17 +153,6 @@ pub struct Font {
     id: usize,
 }
 
-#[derive(Debug, Default)]
-struct DropAlarm(bool);
-
-impl Drop for DropAlarm {
-    fn drop(&mut self) {
-        if !self.0 {
-            panic!("JamBrushSystem dropped without calling `destroy()`");
-        }
-    }
-}
-
 // TODO: all the unwraps...
 
 #[derive(Debug, Default, Clone)]
@@ -166,14 +175,14 @@ fn make_transform(pos: [f32; 2], scale: [f32; 2], resolution: [f32; 2]) -> [[f32
     let [sx, sy] = resolution;
     let [w, h] = scale;
     let [x, y] = pos;
-    let dx = -1.0 + 2.0 * (x / sx as f32);
-    let dy = -1.0 + 2.0 * (y / sy as f32);
+    let dx = -1. + 2. * (x / sx as f32);
+    let dy = -1. + 2. * (y / sy as f32);
 
     [
-        [(w / sx as f32) * 2.0, 0.0, 0.0, 0.0],
-        [0.0, (h / sy as f32) * 2.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [dx, dy, 0.0, 1.0],
+        [(w / sx as f32) * 2., 0., 0., 0.],
+        [0., (h / sy as f32) * 2., 0., 0.],
+        [0., 0., 1., 0.],
+        [dx, dy, 0., 1.],
     ]
 }
 
@@ -196,10 +205,10 @@ struct GpuResources {
 
     surface: backend::Surface,
     surface_color_format: Format,
-    adapter: gfx_hal::Adapter<backend::Backend>,
+    adapter: Adapter<backend::Backend>,
     device: TDevice,
-    queue_group: gfx_hal::QueueGroup<backend::Backend, Graphics>,
-    command_pool: gfx_hal::CommandPool<backend::Backend, Graphics>,
+    queue_group: TQueueGroup,
+    command_pool: TCommandPool,
     render_pass: TRenderPass,
     set_layout: TDescriptorSetLayout,
     pipeline_layout: TPipelineLayout,
@@ -215,7 +224,6 @@ struct GpuResources {
     rtt_memory: TMemory,
     rtt_view: TImageView,
     rtt_sampler: TSampler,
-    rtt_framebuffer: TFramebuffer,
     texture_fence: TFence,
     atlas_texture: TImage,
     atlas_memory: TMemory,
@@ -223,19 +231,14 @@ struct GpuResources {
     atlas_sampler: TSampler,
     vertex_buffers: Vec<TBuffer>,
     vertex_memories: Vec<TMemory>,
-    swapchain: Option<(
-        backend::Swapchain,
-        Extent,
-        Vec<TImage>,
-        Vec<TImageView>,
-        Vec<TFramebuffer>,
-    )>,
+    surface_extent: Extent2D,
     swapchain_invalidated: bool,
 }
 
 impl GpuResources {
     fn destroy(self) {
         let GpuResources {
+            mut surface,
             device,
             command_pool,
             render_pass,
@@ -251,7 +254,6 @@ impl GpuResources {
             rtt_memory,
             rtt_view,
             rtt_sampler,
-            rtt_framebuffer,
             texture_fence,
             atlas_texture,
             atlas_memory,
@@ -268,7 +270,6 @@ impl GpuResources {
             device.free_memory(atlas_memory);
             device.destroy_image(atlas_texture);
             device.destroy_fence(texture_fence);
-            device.destroy_framebuffer(rtt_framebuffer);
             device.destroy_sampler(rtt_sampler);
             device.destroy_image_view(rtt_view);
             device.free_memory(rtt_memory);
@@ -287,15 +288,15 @@ impl GpuResources {
             device.destroy_graphics_pipeline(pipeline);
             device.destroy_pipeline_layout(pipeline_layout);
             device.destroy_descriptor_set_layout(set_layout);
-            device.destroy_command_pool(command_pool.into_raw());
+            device.destroy_command_pool(command_pool);
             device.destroy_render_pass(render_pass);
+            surface.unconfigure_swapchain(&device);
         }
     }
 }
 
 struct WindowData {
-    #[cfg(not(feature = "opengl"))]
-    window: winit::Window,
+    window: winit::window::Window,
 
     resolution: [u32; 2],
     dpi_factor: f64,
@@ -366,8 +367,6 @@ impl<'a> IntoLines<'a> for &'a Vec<&'a str> {
 
 // TODO: Lots. Think about resolution/rebuilding RTT texture
 pub struct JamBrushSystem {
-    drop_alarm: DropAlarm,
-
     cpu_cache: CpuSideCache,
     gpu: Option<GpuResources>,
     window_data: WindowData,
@@ -384,7 +383,7 @@ pub struct JamBrushSystem {
 impl JamBrushSystem {
     fn initialize_window(
         window_builder: WindowBuilder,
-        events_loop: &EventsLoop,
+        event_loop: &EventLoopWindowTarget<()>,
         canvas_size: Option<[u32; 2]>,
         logging: bool,
         max_texture_atlas_size: Option<u32>,
@@ -395,66 +394,94 @@ impl JamBrushSystem {
 
         #[cfg(not(feature = "opengl"))]
         let (window, inner_size, dpi_factor, _instance, surface, adapter) = {
-            let window = window_builder.build(events_loop).unwrap();
-            let inner_size = window.get_inner_size().unwrap();
-            let dpi_factor = window.get_hidpi_factor();
-            let _instance = backend::Instance::create("JamBrush", 1);
-            let surface = _instance.create_surface(&window);
+            let window = window_builder.build(event_loop).unwrap();
+            let dpi_factor = window.scale_factor();
+            let inner_size: PhysicalSize<u32> = window.inner_size();
+            let _instance =
+                backend::Instance::create("JamBrush", 1).expect("Backend not supported");
+            let surface = unsafe {
+                _instance
+                    .create_surface(&window)
+                    .expect("Failed to create surface for window")
+            };
             let adapter = _instance.enumerate_adapters().remove(0);
             (window, inner_size, dpi_factor, _instance, surface, adapter)
         };
 
         #[cfg(feature = "opengl")]
-        let (inner_size, dpi_factor, adapter, surface) = {
-            // TODO: We probably shouldn't just make a new window...
-            let window = {
+        let (window, inner_size, dpi_factor, adapter, surface) = {
+            let (window, surface) = {
                 let builder = backend::config_context(
                     backend::glutin::ContextBuilder::new(),
-                    Format::Rgba8Srgb,
+                    gfx_hal::format::Format::Rgba8Srgb,
                     None,
                 )
                 .with_vsync(true);
 
-                backend::glutin::WindowedContext::new_windowed(
-                    window_builder,
-                    builder,
-                    &events_loop,
-                )
-                .unwrap()
+                let windowed_context = builder.build_windowed(window_builder, &event_loop).unwrap();
+
+                let (context, window) = unsafe {
+                    windowed_context
+                        .make_current()
+                        .expect("Unable to make context current")
+                        .split()
+                };
+
+                let surface = backend::Surface::from_context(context);
+
+                (window, surface)
             };
 
-            let inner_size = window.get_inner_size().unwrap();
-            let dpi_factor = window.get_hidpi_factor();
-            let surface = backend::Surface::from_window(window);
+            let dpi_factor = window.scale_factor();
+            let inner_size: PhysicalSize<u32> = window.inner_size();
             let adapter = surface.enumerate_adapters().remove(0);
-            (inner_size, dpi_factor, adapter, surface)
+            (window, inner_size, dpi_factor, adapter, surface)
         };
 
         let resolution = canvas_size.unwrap_or_else(|| {
-            let (window_w, window_h) = inner_size.into();
+            let logical_size: LogicalSize<u32> = inner_size.to_logical(dpi_factor);
+            let (window_w, window_h) = logical_size.into();
             [window_w, window_h]
         });
 
-        let (device, queue_group) = adapter
-            .open_with::<_, Graphics>(1, |family| surface.supports_queue_family(family))
-            .unwrap();
+        let (device, queue_group) = {
+            use gfx_hal::queue::QueueFamily;
+
+            let queue_family = adapter
+                .queue_families
+                .iter()
+                .find(|family| {
+                    surface.supports_queue_family(family) && family.queue_type().supports_graphics()
+                })
+                .expect("No compatible queue family found");
+
+            let mut gpu = unsafe {
+                adapter
+                    .physical_device
+                    .open(&[(queue_family, &[1.])], gfx_hal::Features::empty())
+                    .expect("Failed to open device")
+            };
+
+            (gpu.device, gpu.queue_groups.pop().unwrap())
+        };
 
         let command_pool = unsafe {
             device
-                .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty())
-                .unwrap()
+                .create_command_pool(queue_group.family, CommandPoolCreateFlags::empty())
+                .expect("TODO")
         };
 
-        let (_caps, formats, _) = surface.compatibility(&adapter.physical_device);
-
         let surface_color_format = {
-            match formats {
-                Some(choices) => choices
-                    .into_iter()
-                    .find(|format| format.base_format().1 == ChannelType::Srgb)
-                    .unwrap(),
-                None => Format::Rgba8Srgb,
-            }
+            let supported_formats = surface
+                .supported_formats(&adapter.physical_device)
+                .unwrap_or(vec![]);
+
+            let default_format = *supported_formats.get(0).unwrap_or(&Format::Rgba8Srgb);
+
+            supported_formats
+                .into_iter()
+                .find(|format| format.base_format().1 == ChannelType::Srgb)
+                .unwrap_or(default_format)
         };
 
         let render_pass = unsafe {
@@ -474,16 +501,8 @@ impl JamBrushSystem {
                 preserves: &[],
             };
 
-            let dependency = SubpassDependency {
-                passes: SubpassRef::External..SubpassRef::Pass(0),
-                stages: PipelineStage::COLOR_ATTACHMENT_OUTPUT
-                    ..PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-                accesses: Access::empty()
-                    ..(Access::COLOR_ATTACHMENT_READ | Access::COLOR_ATTACHMENT_WRITE),
-            };
-
             device
-                .create_render_pass(&[color_attachment], &[subpass], &[dependency])
+                .create_render_pass(&[color_attachment], &[subpass], &[])
                 .unwrap()
         };
 
@@ -493,7 +512,11 @@ impl JamBrushSystem {
                     &[
                         DescriptorSetLayoutBinding {
                             binding: 0,
-                            ty: DescriptorType::SampledImage,
+                            ty: DescriptorType::Image {
+                                ty: ImageDescriptorType::Sampled {
+                                    with_sampler: false,
+                                },
+                            },
                             count: 1,
                             stage_flags: ShaderStageFlags::FRAGMENT,
                             immutable_samplers: false,
@@ -522,7 +545,9 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.vert.spv"
             ));
-            device.create_shader_module(spirv).unwrap()
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
         };
 
         let fragment_shader_module = unsafe {
@@ -530,7 +555,9 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.frag.spv"
             ));
-            device.create_shader_module(spirv).unwrap()
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
         };
 
         let pipeline = unsafe {
@@ -567,10 +594,10 @@ impl JamBrushSystem {
                 subpass,
             );
 
-            pipeline_desc
-                .blender
-                .targets
-                .push(ColorBlendDesc(ColorMask::ALL, BlendState::ALPHA));
+            pipeline_desc.blender.targets.push(ColorBlendDesc {
+                mask: ColorMask::ALL,
+                blend: Some(BlendState::ALPHA),
+            });
 
             pipeline_desc.vertex_buffers.push(VertexBufferDesc {
                 binding: 0,
@@ -616,7 +643,11 @@ impl JamBrushSystem {
                     2,
                     &[
                         DescriptorRangeDesc {
-                            ty: DescriptorType::SampledImage,
+                            ty: DescriptorType::Image {
+                                ty: ImageDescriptorType::Sampled {
+                                    with_sampler: false,
+                                },
+                            },
                             count: 2,
                         },
                         DescriptorRangeDesc {
@@ -642,11 +673,11 @@ impl JamBrushSystem {
         const QY: f32 = {
             #[cfg(feature = "opengl")]
             {
-                0.0
+                0.
             }
             #[cfg(not(feature = "opengl"))]
             {
-                1.0
+                1.
             }
         };
         let (quad_buffer, quad_memory) = unsafe {
@@ -657,33 +688,33 @@ impl JamBrushSystem {
                 buffer::Usage::VERTEX,
                 &[
                     Vertex {
-                        offset: [-1.0, -1.0, 0.0],
-                        uv: [0.0, 1.0 - QY],
+                        offset: [-1., -1., 0.],
+                        uv: [0., 1. - QY],
                         tint: WHITE,
                     },
                     Vertex {
-                        offset: [-1.0, 1.0, 0.0],
-                        uv: [0.0, QY],
+                        offset: [-1., 1., 0.],
+                        uv: [0., QY],
                         tint: WHITE,
                     },
                     Vertex {
-                        offset: [1.0, -1.0, 0.0],
-                        uv: [1.0, 1.0 - QY],
+                        offset: [1., -1., 0.],
+                        uv: [1., 1. - QY],
                         tint: WHITE,
                     },
                     Vertex {
-                        offset: [-1.0, 1.0, 0.0],
-                        uv: [0.0, QY],
+                        offset: [-1., 1., 0.],
+                        uv: [0., QY],
                         tint: WHITE,
                     },
                     Vertex {
-                        offset: [1.0, 1.0, 0.0],
-                        uv: [1.0, QY],
+                        offset: [1., 1., 0.],
+                        uv: [1., QY],
                         tint: WHITE,
                     },
                     Vertex {
-                        offset: [1.0, -1.0, 0.0],
-                        uv: [1.0, 1.0 - QY],
+                        offset: [1., -1., 0.],
+                        uv: [1., 1. - QY],
                         tint: WHITE,
                     },
                 ],
@@ -707,7 +738,7 @@ impl JamBrushSystem {
             println!("  Canvas size: {} x {}", resolution[0], resolution[1]);
         }
 
-        let (rtt_image, rtt_memory, rtt_view, rtt_sampler, rtt_framebuffer) = unsafe {
+        let (rtt_image, rtt_memory, rtt_view, rtt_sampler) = unsafe {
             let [width, height] = resolution;
             let extent = Extent {
                 width,
@@ -726,20 +757,10 @@ impl JamBrushSystem {
             );
 
             let rtt_sampler = device
-                .create_sampler(img::SamplerInfo::new(Filter::Nearest, WrapMode::Clamp))
+                .create_sampler(&SamplerDesc::new(Filter::Nearest, WrapMode::Clamp))
                 .unwrap();
 
-            let rtt_framebuffer = device
-                .create_framebuffer(&render_pass, vec![&rtt_view], extent)
-                .unwrap();
-
-            (
-                rtt_image,
-                rtt_memory,
-                rtt_view,
-                rtt_sampler,
-                rtt_framebuffer,
-            )
+            (rtt_image, rtt_memory, rtt_view, rtt_sampler)
         };
 
         let limits = adapter.physical_device.limits();
@@ -769,7 +790,7 @@ impl JamBrushSystem {
             );
 
             let texture_sampler = device
-                .create_sampler(img::SamplerInfo::new(Filter::Nearest, WrapMode::Clamp))
+                .create_sampler(&SamplerDesc::new(Filter::Nearest, WrapMode::Clamp))
                 .unwrap();
 
             // TODO: Maybe allow pre-loading sprites here?
@@ -809,12 +830,9 @@ impl JamBrushSystem {
             ]);
         }
 
-        let swapchain = None;
-
         (
             InitInfo { atlas_size },
             WindowData {
-                #[cfg(not(feature = "opengl"))]
                 window,
 
                 resolution,
@@ -845,7 +863,6 @@ impl JamBrushSystem {
                 rtt_memory,
                 rtt_view,
                 rtt_sampler,
-                rtt_framebuffer,
                 texture_fence,
                 atlas_texture,
                 atlas_memory,
@@ -853,7 +870,10 @@ impl JamBrushSystem {
                 atlas_sampler,
                 vertex_buffers,
                 vertex_memories,
-                swapchain,
+                surface_extent: Extent2D {
+                    width: inner_size.width,
+                    height: inner_size.height,
+                },
                 swapchain_invalidated: true,
             },
         )
@@ -861,16 +881,16 @@ impl JamBrushSystem {
 
     pub fn new(
         window_builder: WindowBuilder,
-        events_loop: &EventsLoop,
+        event_loop: &EventLoopWindowTarget<()>,
         config: &JamBrushConfig,
     ) -> Self {
         if config.logging {
-            println!("Constructing JamBrushSystem:");
+            println!("Constructing JamBrushSystem (backend={}):", BACKEND);
         }
 
         let (init_info, window_data, gpu) = Self::initialize_window(
             window_builder,
-            events_loop,
+            event_loop,
             config.canvas_size,
             config.logging,
             config.max_texture_atlas_size,
@@ -898,8 +918,6 @@ impl JamBrushSystem {
             .build();
 
         JamBrushSystem {
-            drop_alarm: DropAlarm(false),
-
             cpu_cache: CpuSideCache {
                 sprite_textures: vec![],
                 sprite_regions: vec![],
@@ -921,13 +939,17 @@ impl JamBrushSystem {
         }
     }
 
-    pub fn rebuild_window(&mut self, window_builder: WindowBuilder, events_loop: &EventsLoop) {
+    pub fn rebuild_window(
+        &mut self,
+        window_builder: WindowBuilder,
+        event_loop: &EventLoopWindowTarget<()>,
+    ) {
         let old_gpu = self.gpu.take().unwrap();
         old_gpu.destroy();
 
         let (_, window_data, gpu) = Self::initialize_window(
             window_builder,
-            events_loop,
+            event_loop,
             Some(self.window_data.resolution),
             self.logging,
             Some(self.cpu_cache.atlas_image.width()),
@@ -936,20 +958,6 @@ impl JamBrushSystem {
         self.window_data = window_data;
         self.gpu = Some(gpu);
         self.upload_atlas_texture();
-    }
-
-    pub fn destroy(mut self) {
-        self.drop_alarm.0 = true;
-
-        if self.gpu.as_mut().unwrap().swapchain.is_some() {
-            self.destroy_swapchain();
-        }
-
-        let JamBrushSystem { gpu, .. } = self;
-
-        if let Some(gpu) = gpu {
-            gpu.destroy();
-        }
     }
 
     fn log<S: AsRef<str>>(&self, message: S) {
@@ -974,16 +982,8 @@ impl JamBrushSystem {
         )
     }
 
-    pub fn window(&self) -> &winit::Window {
-        #[cfg(not(feature = "opengl"))]
-        {
-            &self.window_data.window
-        }
-
-        #[cfg(feature = "opengl")]
-        {
-            unimplemented!("Cannot retrieve Window with OpenGL backing just yet")
-        }
+    pub fn window(&self) -> &winit::window::Window {
+        &self.window_data.window
     }
 
     pub fn window_resized(&mut self, _resolution: (u32, u32)) {
@@ -993,7 +993,10 @@ impl JamBrushSystem {
 
         #[cfg(feature = "opengl")]
         {
-            gpu.surface.get_window().resize(_resolution.into());
+            let context = gpu.surface.context();
+            context.resize(_resolution.into());
+            gpu.surface_extent.width = _resolution.0;
+            gpu.surface_extent.height = _resolution.1;
         }
         self.log("Swapchain invalidated: window resized");
     }
@@ -1108,7 +1111,9 @@ impl JamBrushSystem {
 
             for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
                 // TODO: ugh, string keys?
-                atlas_packer.pack_ref(index.to_string(), texture);
+                atlas_packer
+                    .pack_ref(index.to_string(), texture)
+                    .expect("pack_ref failed");
             }
 
             self.cpu_cache.sprite_regions.clear();
@@ -1127,7 +1132,8 @@ impl JamBrushSystem {
                     .push(([x, y], [w, h], [pw as f32, ph as f32]));
                 self.cpu_cache
                     .atlas_image
-                    .copy_from(texture, frame.x, frame.y);
+                    .copy_from(texture, frame.x, frame.y)
+                    .expect("Copy to atlas image failed");
             }
         }
 
@@ -1154,107 +1160,32 @@ impl JamBrushSystem {
 
     fn update_swapchain(&mut self) {
         let gpu = self.gpu.as_mut().unwrap();
-        if gpu.swapchain_invalidated && gpu.swapchain.is_some() {
-            self.destroy_swapchain();
-        }
-
-        let gpu = self.gpu.as_mut().unwrap();
-        if gpu.swapchain.is_none() {
+        if gpu.swapchain_invalidated {
             self.create_swapchain();
-        }
-    }
-
-    fn destroy_swapchain(&mut self) {
-        self.log("Destroying swapchain");
-        let gpu = self.gpu.as_mut().unwrap();
-
-        let (swapchain, _extent, _frame_images, frame_views, framebuffers) =
-            gpu.swapchain.take().unwrap();
-
-        unsafe {
-            gpu.device.wait_idle().unwrap();
-            gpu.command_pool.reset();
-
-            for framebuffer in framebuffers {
-                gpu.device.destroy_framebuffer(framebuffer);
-            }
-
-            for image_view in frame_views {
-                gpu.device.destroy_image_view(image_view);
-            }
-
-            gpu.device.destroy_swapchain(swapchain);
         }
     }
 
     fn create_swapchain(&mut self) {
         self.log("Creating swapchain");
         let gpu = self.gpu.as_mut().unwrap();
-
         gpu.swapchain_invalidated = false;
-        let (caps, _, _) = gpu.surface.compatibility(&gpu.adapter.physical_device);
 
-        let swap_config = SwapchainConfig::from_caps(
-            &caps,
-            gpu.surface_color_format,
-            Extent2D {
-                width: self.window_data.resolution[0],
-                height: self.window_data.resolution[1],
-            },
-        );
+        let caps = gpu.surface.capabilities(&gpu.adapter.physical_device);
 
-        self.log(format!("  Present mode: {:?}", swap_config.present_mode));
+        let mut swapchain_config =
+            SwapchainConfig::from_caps(&caps, gpu.surface_color_format, gpu.surface_extent);
 
-        self.log(format!("  DPI factor: {}", self.window_data.dpi_factor));
+        // This seems to fix some fullscreen slowdown on macOS.
+        if caps.image_count.contains(&3) {
+            swapchain_config.image_count = 3;
+        }
 
-        self.log(format!(
-            "  Swapchain dimensions: {} x {}",
-            swap_config.extent.width, swap_config.extent.height
-        ));
+        gpu.surface_extent = swapchain_config.extent;
 
         unsafe {
-            let gpu = self.gpu.as_mut().unwrap();
-            let extent = swap_config.extent.to_extent();
-            let (swapchain, backbuffer) = gpu
-                .device
-                .create_swapchain(&mut gpu.surface, swap_config, None)
-                .unwrap();
-
-            let (frame_images, frame_views, framebuffers) = {
-                let color_range = SubresourceRange {
-                    aspects: Aspects::COLOR,
-                    levels: 0..1,
-                    layers: 0..1,
-                };
-
-                let image_views = backbuffer
-                    .iter()
-                    .map(|image| {
-                        gpu.device
-                            .create_image_view(
-                                image,
-                                ViewKind::D2,
-                                gpu.surface_color_format,
-                                Swizzle::NO,
-                                color_range.clone(),
-                            )
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>();
-
-                let fbos = image_views
-                    .iter()
-                    .map(|image_view| {
-                        gpu.device
-                            .create_framebuffer(&gpu.render_pass, vec![image_view], extent)
-                            .unwrap()
-                    })
-                    .collect();
-
-                (backbuffer, image_views, fbos)
-            };
-
-            gpu.swapchain = Some((swapchain, extent, frame_images, frame_views, framebuffers));
+            gpu.surface
+                .configure_swapchain(&gpu.device, swapchain_config)
+                .expect("Failed to configure swapchain");
         }
     }
 
@@ -1264,7 +1195,6 @@ impl JamBrushSystem {
             gpu.device.wait_idle().unwrap();
             gpu.device.reset_fence(&gpu.texture_fence).unwrap();
 
-            let swizzle = false;
             let image = match capture_type {
                 Capture::Canvas => &gpu.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &gpu.atlas_texture,
@@ -1294,8 +1224,8 @@ impl JamBrushSystem {
             let height = memory_size as u32 / footprint.row_pitch as u32;
 
             let submit = {
-                let mut cmd_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
-                cmd_buffer.begin();
+                let mut cmd_buffer = gpu.command_pool.allocate_one(Level::Primary);
+                cmd_buffer.begin_primary(CommandBufferFlags::ONE_TIME_SUBMIT);
 
                 cmd_buffer.copy_image_to_buffer(
                     image,
@@ -1323,26 +1253,20 @@ impl JamBrushSystem {
                 cmd_buffer
             };
 
-            gpu.queue_group.queues[0].submit_nosemaphores(&[submit], Some(&gpu.texture_fence));
+            gpu.queue_group.queues[0]
+                .submit_without_semaphores(&[submit], Some(&gpu.texture_fence));
 
             gpu.device.wait_for_fence(&gpu.texture_fence, !0).unwrap();
 
             let image_bytes = {
-                let data = gpu
+                let mapped_memory = gpu
                     .device
-                    .acquire_mapping_reader::<u8>(&screenshot_memory, 0..memory_size)
-                    .expect("acquire_mapping_reader failed");
+                    .map_memory(&screenshot_memory, Segment::ALL)
+                    .expect("TODO");
 
-                let mut image_bytes: Vec<u8> = data.to_owned();
-
-                if swizzle {
-                    for chunk in image_bytes.chunks_mut(4) {
-                        let (r, rest) = chunk.split_first_mut().unwrap();
-                        std::mem::swap(r, &mut rest[1]);
-                    }
-                }
-
-                gpu.device.release_mapping_reader(data);
+                let image_bytes =
+                    Vec::from_raw_parts(mapped_memory, memory_size as usize, memory_size as usize);
+                gpu.device.unmap_memory(&screenshot_memory);
 
                 image_bytes
             };
@@ -1355,7 +1279,7 @@ impl JamBrushSystem {
         use image::ColorType;
 
         let (size, image_bytes) = self.capture_image(capture_type);
-        image::save_buffer(path, &image_bytes, size[0], size[1], ColorType::RGBA(8)).unwrap();
+        image::save_buffer(path, &image_bytes, size[0], size[1], ColorType::Rgba8).unwrap();
     }
 
     pub fn recording(&mut self) -> bool {
@@ -1382,15 +1306,24 @@ impl JamBrushSystem {
     }
 }
 
+impl Drop for JamBrushSystem {
+    fn drop(&mut self) {
+        let gpu = self.gpu.take().unwrap();
+        gpu.destroy();
+    }
+}
+
 pub struct Renderer<'a> {
     draw_system: &'a mut JamBrushSystem,
     canvas_clear_color: [f32; 4],
-    frame_index: SwapImageIndex,
-    blit_command_buffer: Option<CommandBuffer<backend::Backend, Graphics, OneShot, Primary>>,
+    surface_image: ManuallyDrop<TSurfaceImage>,
+    blit_command_buffer: Option<TCommandBuffer>,
     sprites: Vec<(f32, SpritePushConstants)>,
     glyphs: Vec<(f32, Glyph)>,
     finished: bool,
     camera: [f32; 2],
+    framebuffer: ManuallyDrop<TFramebuffer>,
+    rtt_framebuffer: ManuallyDrop<TFramebuffer>,
 }
 
 impl<'a> Renderer<'a> {
@@ -1404,40 +1337,76 @@ impl<'a> Renderer<'a> {
             draw_system.update_swapchain();
 
             let gpu = draw_system.gpu.as_mut().unwrap();
-            gpu.command_pool.reset();
+            gpu.command_pool.reset(false);
         }
 
-        let frame_index: SwapImageIndex;
-        let blit_command_buffer: CommandBuffer<backend::Backend, Graphics, OneShot, Primary>;
+        let surface_image: TSurfaceImage;
+        let blit_command_buffer: TCommandBuffer;
+        let framebuffer: TFramebuffer;
+        let rtt_framebuffer: TFramebuffer;
 
         unsafe {
+            use std::borrow::Borrow;
+
             let gpu = draw_system.gpu.as_mut().unwrap();
-            let (swapchain, extent, _frame_images, _frame_views, framebuffers) =
-                gpu.swapchain.as_mut().unwrap();
+
+            let surface_extent = gpu.surface_extent;
 
             // TODO: handle failure
-            let (index, _) = swapchain
-                .acquire_image(!0, Some(&gpu.frame_semaphore), None)
-                .unwrap();
-            frame_index = index;
+            let (image, _) = gpu.surface.acquire_image(ACQUIRE_TIMEOUT_NS).unwrap();
+            surface_image = image;
+
+            rtt_framebuffer = gpu
+                .device
+                .create_framebuffer(
+                    &gpu.render_pass,
+                    vec![&gpu.rtt_view], // TODO: Depth image too
+                    Extent {
+                        width: surface_extent.width,
+                        height: surface_extent.height,
+                        depth: 1,
+                    },
+                )
+                .expect("Failed to create framebuffer");
+
+            framebuffer = gpu
+                .device
+                .create_framebuffer(
+                    &gpu.render_pass,
+                    vec![surface_image.borrow()],
+                    Extent {
+                        width: surface_extent.width,
+                        height: surface_extent.height,
+                        depth: 1,
+                    },
+                )
+                .expect("Failed to create RTT framebuffer");
+
+            const ACQUIRE_TIMEOUT_NS: u64 = 1_000_000_000;
 
             blit_command_buffer = {
-                let mut command_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
-                command_buffer.begin();
+                let mut command_buffer = gpu.command_pool.allocate_one(Level::Primary);
+                command_buffer.begin_primary(CommandBufferFlags::ONE_TIME_SUBMIT);
 
                 let [vwidth, vheight] = draw_system.window_data.resolution;
 
                 let base_width = (f64::from(vwidth) * draw_system.window_data.dpi_factor) as u32;
                 let base_height = (f64::from(vheight) * draw_system.window_data.dpi_factor) as u32;
 
-                let integer_scale =
-                    std::cmp::min(extent.width / base_width, extent.height / base_height);
+                let integer_scale = std::cmp::min(
+                    surface_extent.width / base_width,
+                    surface_extent.height / base_height,
+                );
 
                 let (viewport_width, viewport_height) = if integer_scale == 0 {
-                    let viewport_width =
-                        std::cmp::min(extent.width, (extent.height * vwidth) / vheight);
-                    let viewport_height =
-                        std::cmp::min(extent.height, (extent.width * vheight) / vwidth);
+                    let viewport_width = std::cmp::min(
+                        surface_extent.width,
+                        (surface_extent.height * vwidth) / vheight,
+                    );
+                    let viewport_height = std::cmp::min(
+                        surface_extent.height,
+                        (surface_extent.width * vheight) / vwidth,
+                    );
                     (viewport_width, viewport_height)
                 } else {
                     let viewport_width = base_width * integer_scale;
@@ -1445,8 +1414,8 @@ impl<'a> Renderer<'a> {
                     (viewport_width, viewport_height)
                 };
 
-                let viewport_x = (extent.width - viewport_width) / 2;
-                let viewport_y = (extent.height - viewport_height) / 2;
+                let viewport_x = (surface_extent.width - viewport_width) / 2;
+                let viewport_y = (surface_extent.height - viewport_height) / 2;
 
                 let viewport = Viewport {
                     rect: Rect {
@@ -1462,7 +1431,8 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
                 command_buffer.bind_graphics_pipeline(&gpu.pipeline);
-                command_buffer.bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[0], 0)]);
+                command_buffer
+                    .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[0], SubRange::WHOLE)]);
                 command_buffer.bind_graphics_descriptor_sets(
                     &gpu.pipeline_layout,
                     0,
@@ -1470,16 +1440,27 @@ impl<'a> Renderer<'a> {
                     &[],
                 );
 
-                {
-                    let mut encoder = command_buffer.begin_render_pass_inline(
-                        &gpu.render_pass,
-                        &framebuffers[frame_index as usize],
-                        viewport.rect,
-                        &[ClearValue::Color(ClearColor::Float(border_clear_color))],
-                    );
+                command_buffer.begin_render_pass(
+                    &gpu.render_pass,
+                    &framebuffer,
+                    viewport.rect,
+                    &[
+                        ClearValue {
+                            color: ClearColor {
+                                float32: border_clear_color,
+                            },
+                        },
+                        // ClearValue {
+                        //     depth_stencil: ClearDepthStencil {
+                        //         depth: 1.,
+                        //         stencil: 0,
+                        //     },
+                        // },
+                    ],
+                    SubpassContents::Inline,
+                );
 
-                    encoder.draw(0..6, 0..1);
-                }
+                command_buffer.draw(0..6, 0..1);
 
                 command_buffer.finish();
                 command_buffer
@@ -1489,12 +1470,14 @@ impl<'a> Renderer<'a> {
         Renderer {
             draw_system,
             canvas_clear_color,
-            frame_index,
+            surface_image: ManuallyDrop::new(surface_image),
             blit_command_buffer: Some(blit_command_buffer),
             sprites: vec![],
             glyphs: vec![],
             finished: false,
-            camera: [0.0, 0.0],
+            camera: [0., 0.],
+            framebuffer: ManuallyDrop::new(framebuffer),
+            rtt_framebuffer: ManuallyDrop::new(rtt_framebuffer),
         }
     }
 
@@ -1503,13 +1486,13 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn clear_camera(&mut self) {
-        self.camera([0.0, 0.0]);
+        self.camera([0., 0.]);
     }
 
     pub fn center_camera(&mut self, on: [f32; 2]) {
         let [rx, ry] = self.draw_system.window_data.resolution;
         let [x, y] = on;
-        self.camera([x - rx as f32 / 2.0, y - ry as f32 / 2.0]);
+        self.camera([x - rx as f32 / 2., y - ry as f32 / 2.]);
     }
 
     pub fn sprite<T: Into<SpriteArgs>>(&mut self, sprite: &Sprite, args: T) {
@@ -1523,7 +1506,7 @@ impl<'a> Renderer<'a> {
         let [res_x, res_y] = self.draw_system.window_data.resolution;
 
         let [px, py] = pixel_scale;
-        let [sx, sy] = [1.0 / sprite.grid[0] as f32, 1.0 / sprite.grid[1] as f32];
+        let [sx, sy] = [1. / sprite.grid[0] as f32, 1. / sprite.grid[1] as f32];
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
         let tint = srgb_to_linear(args.tint);
@@ -1606,8 +1589,8 @@ impl<'a> Renderer<'a> {
         let mut line_start = 0;
         let mut word_start = None;
         let mut last_word_end = None;
-        let mut word_lead = 0.0;
-        let mut word_width = 0.0;
+        let mut word_lead = 0.;
+        let mut word_width = 0.;
         let mut chars = text.char_indices();
 
         loop {
@@ -1621,9 +1604,9 @@ impl<'a> Renderer<'a> {
             let glyph = glyph.scaled(scale);
             let kerning = previous
                 .map(|prev| font.pair_kerning(scale, prev, glyph.id()))
-                .unwrap_or(0.0);
+                .unwrap_or(0.);
             let advance = match ch {
-                '\n' => 0.0,
+                '\n' => 0.,
                 _ => glyph.h_metrics().advance_width,
             };
 
@@ -1643,7 +1626,7 @@ impl<'a> Renderer<'a> {
 
                 last_word_end = Some(index);
                 word_start = None;
-                word_width = 0.0;
+                word_width = 0.;
                 word_lead = advance;
             } else {
                 word_width += advance;
@@ -1789,7 +1772,9 @@ impl<'a> Renderer<'a> {
                 }
 
                 let image_region = RgbaImage::from_raw(w, h, rgba_buffer).unwrap();
-                font_atlas_image.copy_from(&image_region, x, y + atlas_height / 2);
+                font_atlas_image
+                    .copy_from(&image_region, x, y + atlas_height / 2)
+                    .expect("Failed to copy into font atlas");
                 modified = true;
             })
             .unwrap();
@@ -1839,8 +1824,8 @@ impl<'a> Renderer<'a> {
                             [res_x as f32, res_y as f32],
                         ),
                         tint,
-                        uv_origin: [u, 0.5 + v / 2.0],
-                        uv_scale: [uw, vh / 2.0],
+                        uv_origin: [u, 0.5 + v / 2.],
+                        uv_scale: [uw, vh / 2.],
                     }
                 };
 
@@ -1868,12 +1853,12 @@ impl<'a> Renderer<'a> {
 
             for (depth, sprite) in &self.sprites {
                 const BASE_VERTICES: &[([f32; 2], [f32; 2])] = &[
-                    ([0.0, 0.0], [0.0, 0.0]),
-                    ([0.0, 1.0], [0.0, 1.0]),
-                    ([1.0, 0.0], [1.0, 0.0]),
-                    ([0.0, 1.0], [0.0, 1.0]),
-                    ([1.0, 1.0], [1.0, 1.0]),
-                    ([1.0, 0.0], [1.0, 0.0]),
+                    ([0., 0.], [0., 0.]),
+                    ([0., 1.], [0., 1.]),
+                    ([1., 0.], [1., 0.]),
+                    ([0., 1.], [0., 1.]),
+                    ([1., 1.], [1., 1.]),
+                    ([1., 0.], [1., 0.]),
                 ];
 
                 // TODO: Don't even have an intermediary matrix
@@ -1901,12 +1886,9 @@ impl<'a> Renderer<'a> {
         }
 
         unsafe {
-            let (swapchain, _extent, _frame_images, _frame_views, _framebuffers) =
-                gpu.swapchain.as_mut().unwrap();
-
             let scene_command_buffer = {
-                let mut command_buffer = gpu.command_pool.acquire_command_buffer::<OneShot>();
-                command_buffer.begin();
+                let mut command_buffer = gpu.command_pool.allocate_one(Level::Primary);
+                command_buffer.begin_primary(CommandBufferFlags::ONE_TIME_SUBMIT);
 
                 let [vwidth, vheight] = self.draw_system.window_data.resolution;
                 let viewport = Viewport {
@@ -1916,14 +1898,15 @@ impl<'a> Renderer<'a> {
                         w: vwidth as i16,
                         h: vheight as i16,
                     },
-                    depth: 0.0..1.0,
+                    depth: 0. ..1.,
                 };
 
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
                 command_buffer.bind_graphics_pipeline(&gpu.pipeline);
-                command_buffer.bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], 0)]);
+                command_buffer
+                    .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], SubRange::WHOLE)]);
                 command_buffer.bind_graphics_descriptor_sets(
                     &gpu.pipeline_layout,
                     0,
@@ -1931,19 +1914,27 @@ impl<'a> Renderer<'a> {
                     &[],
                 );
 
-                {
-                    let mut encoder = command_buffer.begin_render_pass_inline(
-                        &gpu.render_pass,
-                        &gpu.rtt_framebuffer,
-                        viewport.rect,
-                        &[ClearValue::Color(ClearColor::Float(
-                            self.canvas_clear_color,
-                        ))],
-                    );
-
-                    let num_verts = self.sprites.len() as u32 * 6;
-                    encoder.draw(0..num_verts, 0..1);
-                }
+                command_buffer.begin_render_pass(
+                    &gpu.render_pass,
+                    &self.rtt_framebuffer,
+                    viewport.rect,
+                    &[
+                        ClearValue {
+                            color: ClearColor {
+                                float32: self.canvas_clear_color,
+                            },
+                        },
+                        // ClearValue {
+                        //     depth_stencil: ClearDepthStencil {
+                        //         depth: 1.,
+                        //         stencil: 0,
+                        //     },
+                        // },
+                    ],
+                    SubpassContents::Inline,
+                );
+                let vertex_count = self.sprites.len() as u32 * 6;
+                command_buffer.draw(0..vertex_count, 0..1);
 
                 command_buffer.finish();
                 command_buffer
@@ -1964,10 +1955,10 @@ impl<'a> Renderer<'a> {
             gpu.queue_group.queues[0].submit(scene_submission, None);
             gpu.queue_group.queues[0].submit(blit_submission, None);
 
-            let result = swapchain.present(
-                &mut gpu.queue_group.queues[0],
-                self.frame_index,
-                vec![&gpu.present_semaphore],
+            let result = gpu.queue_group.queues[0].present_surface(
+                &mut gpu.surface,
+                ManuallyDrop::take(&mut self.surface_image),
+                Some(&gpu.present_semaphore),
             );
 
             match result {
@@ -2005,6 +1996,15 @@ impl<'a> Drop for Renderer<'a> {
         if !self.finished {
             panic!("Renderer dropped without calling `finish()`");
         }
+
+        let gpu = self.draw_system.gpu.as_mut().unwrap();
+
+        unsafe {
+            gpu.device
+                .destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
+            gpu.device
+                .destroy_framebuffer(ManuallyDrop::take(&mut self.rtt_framebuffer));
+        }
     }
 }
 
@@ -2019,9 +2019,9 @@ pub struct SpriteArgs {
 impl Default for SpriteArgs {
     fn default() -> Self {
         SpriteArgs {
-            pos: [0.0, 0.0],
+            pos: [0., 0.],
             size: None,
-            depth: 0.0,
+            depth: 0.,
             tint: WHITE,
         }
     }
@@ -2110,7 +2110,7 @@ impl Default for TextArgs {
     fn default() -> Self {
         TextArgs {
             cursor: Cursor::default(),
-            depth: 0.0,
+            depth: 0.,
             tint: WHITE,
         }
     }
