@@ -1304,6 +1304,27 @@ impl JamBrushSystem {
     pub fn render_stats(&self) -> RenderStats {
         self.render_stats
     }
+
+    pub fn window_scale(&self) -> Option<u32> {
+        self.gpu.as_ref().map(|gpu| {
+            let [vwidth, vheight] = self.window_data.resolution;
+            let scale = self.window_data.dpi_factor;
+
+            let base_width = (f64::from(vwidth) * scale) as u32;
+            let base_height = (f64::from(vheight) * scale) as u32;
+
+            let integer_scale = std::cmp::min(
+                gpu.surface_extent.width / base_width,
+                gpu.surface_extent.height / base_height,
+            );
+
+            integer_scale
+        }).filter(|&n| n > 0)
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.window_data.window.fullscreen().is_some()
+    }
 }
 
 impl Drop for JamBrushSystem {
@@ -1348,6 +1369,7 @@ impl<'a> Renderer<'a> {
         unsafe {
             use std::borrow::Borrow;
 
+            let integer_scale = draw_system.window_scale().unwrap_or(0);
             let gpu = draw_system.gpu.as_mut().unwrap();
 
             let surface_extent = gpu.surface_extent;
@@ -1392,11 +1414,6 @@ impl<'a> Renderer<'a> {
 
                 let base_width = (f64::from(vwidth) * draw_system.window_data.dpi_factor) as u32;
                 let base_height = (f64::from(vheight) * draw_system.window_data.dpi_factor) as u32;
-
-                let integer_scale = std::cmp::min(
-                    surface_extent.width / base_width,
-                    surface_extent.height / base_height,
-                );
 
                 let (viewport_width, viewport_height) = if integer_scale == 0 {
                     let viewport_width = std::cmp::min(
@@ -1479,6 +1496,14 @@ impl<'a> Renderer<'a> {
             framebuffer: ManuallyDrop::new(framebuffer),
             rtt_framebuffer: ManuallyDrop::new(rtt_framebuffer),
         }
+    }
+
+    pub fn window_scale(&self) -> Option<u32> {
+        self.draw_system.window_scale()
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.draw_system.window_data.window.fullscreen().is_some()
     }
 
     pub fn camera(&mut self, camera: [f32; 2]) {
