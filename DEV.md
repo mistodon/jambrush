@@ -1,7 +1,10 @@
 Next
 ===
 
-- [ ] Take pos/cursor out of *Args struct
+- [ ] Take pos/cursor out of *Args struct (Why? I forget...)
+- [ ] Find a non-working pixel font and see if we can fix it by clamping each glyph's position
+- [ ] Make an example to validate depth buffer once it's implemented
+- [ ] Fix clipping rect when shrinking window below half size on Metal
 
 Library
 ===
