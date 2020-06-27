@@ -4,12 +4,6 @@ Next
 - [ ] Take pos/cursor out of *Args struct (Why? I forget... Because it's always required?)
 - [ ] Find a non-working pixel font and see if we can fix it by clamping each glyph's position
 - [ ] Fix clipping rect when shrinking window below half size on Metal
-- [ ] Separate the render pass and pipelines for the rtt/blit stages
-- [ ] Separate rtt pipeline into opaque/transparent
-- [ ] Disable sorting (of opaque objects) and prove that this still writes depth correctly
-    - Passes are:
-        - Fully opaque objects
-        - Transparent objects that don't depth write
 
 Library
 ===
