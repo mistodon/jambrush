@@ -49,7 +49,7 @@ use crate::gfxutils::*;
 
 const WHITE: [f32; 4] = [1., 1., 1., 1.];
 const MAX_SPRITE_COUNT: usize = 100000; // TODO: Make dynamic
-const MAX_DEPTH: f32 = 10000.; // TODO: Is this the best we can do? Also we don't even _use_ depth.
+const MAX_DEPTH: f32 = 10000.; // TODO: Let this be customizable
 
 fn srgb_to_linear(color: [f32; 4]) -> [f32; 4] {
     const FACTOR: f32 = 2.2;
@@ -224,6 +224,9 @@ struct GpuResources {
     rtt_memory: TMemory,
     rtt_view: TImageView,
     rtt_sampler: TSampler,
+    depth_image: TImage,
+    depth_memory: TMemory,
+    depth_view: TImageView,
     texture_fence: TFence,
     atlas_texture: TImage,
     atlas_memory: TMemory,
@@ -254,6 +257,9 @@ impl GpuResources {
             rtt_memory,
             rtt_view,
             rtt_sampler,
+            depth_image,
+            depth_memory,
+            depth_view,
             texture_fence,
             atlas_texture,
             atlas_memory,
@@ -270,6 +276,9 @@ impl GpuResources {
             device.free_memory(atlas_memory);
             device.destroy_image(atlas_texture);
             device.destroy_fence(texture_fence);
+            device.destroy_image_view(depth_view);
+            device.free_memory(depth_memory);
+            device.destroy_image(depth_image);
             device.destroy_sampler(rtt_sampler);
             device.destroy_image_view(rtt_view);
             device.free_memory(rtt_memory);
@@ -483,6 +492,7 @@ impl JamBrushSystem {
                 .find(|format| format.base_format().1 == ChannelType::Srgb)
                 .unwrap_or(default_format)
         };
+        let surface_depth_format = Format::D32SfloatS8Uint;
 
         let render_pass = unsafe {
             let color_attachment = Attachment {
@@ -493,16 +503,24 @@ impl JamBrushSystem {
                 layouts: Layout::Undefined..Layout::Present,
             };
 
+            let depth_attachment = Attachment {
+                format: Some(surface_depth_format),
+                samples: 1,
+                ops: AttachmentOps::new(AttachmentLoadOp::Clear, AttachmentStoreOp::DontCare),
+                stencil_ops: AttachmentOps::DONT_CARE,
+                layouts: Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
+            };
+
             let subpass = SubpassDesc {
                 colors: &[(0, Layout::ColorAttachmentOptimal)],
-                depth_stencil: None,
+                depth_stencil: Some(&(1, Layout::DepthStencilAttachmentOptimal)),
                 inputs: &[],
                 resolves: &[],
                 preserves: &[],
             };
 
             device
-                .create_render_pass(&[color_attachment], &[subpass], &[])
+                .create_render_pass(&[color_attachment, depth_attachment], &[subpass], &[])
                 .unwrap()
         };
 
@@ -598,6 +616,15 @@ impl JamBrushSystem {
                 mask: ColorMask::ALL,
                 blend: Some(BlendState::ALPHA),
             });
+
+            pipeline_desc.depth_stencil = DepthStencilDesc {
+                depth: Some(DepthTest {
+                    fun: Comparison::LessEqual,
+                    write: true,
+                }),
+                depth_bounds: false,
+                stencil: None,
+            };
 
             pipeline_desc.vertex_buffers.push(VertexBufferDesc {
                 binding: 0,
@@ -738,19 +765,19 @@ impl JamBrushSystem {
             println!("  Canvas size: {} x {}", resolution[0], resolution[1]);
         }
 
-        let (rtt_image, rtt_memory, rtt_view, rtt_sampler) = unsafe {
-            let [width, height] = resolution;
-            let extent = Extent {
-                width,
-                height,
-                depth: 1,
-            };
+        let [width, height] = resolution;
+        let image_extent = Extent {
+            width,
+            height,
+            depth: 1,
+        };
 
+        let (rtt_image, rtt_memory, rtt_view, rtt_sampler) = unsafe {
             let (rtt_image, rtt_memory, rtt_view) = utils::create_image(
                 &device,
                 &memory_types,
-                extent.width,
-                extent.height,
+                image_extent.width,
+                image_extent.height,
                 Format::Rgba8Srgb,
                 img::Usage::SAMPLED,
                 Aspects::COLOR,
@@ -761,6 +788,18 @@ impl JamBrushSystem {
                 .unwrap();
 
             (rtt_image, rtt_memory, rtt_view, rtt_sampler)
+        };
+
+        let (depth_image, depth_memory, depth_view) = unsafe {
+            utils::create_image(
+                &device,
+                &memory_types,
+                image_extent.width,
+                image_extent.height,
+                surface_depth_format,
+                img::Usage::DEPTH_STENCIL_ATTACHMENT,
+                Aspects::DEPTH | Aspects::STENCIL,
+            )
         };
 
         let limits = adapter.physical_device.limits();
@@ -863,6 +902,9 @@ impl JamBrushSystem {
                 rtt_memory,
                 rtt_view,
                 rtt_sampler,
+                depth_image,
+                depth_memory,
+                depth_view,
                 texture_fence,
                 atlas_texture,
                 atlas_memory,
@@ -1107,6 +1149,7 @@ impl JamBrushSystem {
         };
 
         {
+            // TODO: We can store this now! Don't recreate it every time!
             let mut atlas_packer = TexturePacker::new_skyline(atlas_config);
 
             for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
@@ -1382,7 +1425,7 @@ impl<'a> Renderer<'a> {
                 .device
                 .create_framebuffer(
                     &gpu.render_pass,
-                    vec![&gpu.rtt_view], // TODO: Depth image too
+                    vec![&gpu.rtt_view, &gpu.depth_view],
                     Extent {
                         width: surface_extent.width,
                         height: surface_extent.height,
@@ -1395,7 +1438,7 @@ impl<'a> Renderer<'a> {
                 .device
                 .create_framebuffer(
                     &gpu.render_pass,
-                    vec![surface_image.borrow()],
+                    vec![surface_image.borrow(), &gpu.depth_view],
                     Extent {
                         width: surface_extent.width,
                         height: surface_extent.height,
@@ -1467,12 +1510,12 @@ impl<'a> Renderer<'a> {
                                 float32: border_clear_color,
                             },
                         },
-                        // ClearValue {
-                        //     depth_stencil: ClearDepthStencil {
-                        //         depth: 1.,
-                        //         stencil: 0,
-                        //     },
-                        // },
+                        ClearValue {
+                            depth_stencil: ClearDepthStencil {
+                                depth: 1.,
+                                stencil: 0,
+                            },
+                        },
                     ],
                     SubpassContents::Inline,
                 );
@@ -1949,12 +1992,12 @@ impl<'a> Renderer<'a> {
                                 float32: self.canvas_clear_color,
                             },
                         },
-                        // ClearValue {
-                        //     depth_stencil: ClearDepthStencil {
-                        //         depth: 1.,
-                        //         stencil: 0,
-                        //     },
-                        // },
+                        ClearValue {
+                            depth_stencil: ClearDepthStencil {
+                                depth: 1.,
+                                stencil: 0,
+                            },
+                        },
                     ],
                     SubpassContents::Inline,
                 );
