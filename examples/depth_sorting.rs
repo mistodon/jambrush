@@ -8,7 +8,7 @@ fn main() {
 
     let event_loop = EventLoop::new();
     let window_builder = WindowBuilder::new()
-        .with_title("JamBrush - Depth culling")
+        .with_title("JamBrush - Depth sorting")
         .with_inner_size(LogicalSize::<u32>::from((256, 144)));
 
     let mut jambrush = jambrush::JamBrushSystem::new(
@@ -23,9 +23,13 @@ fn main() {
         },
     );
 
-    let sprite = jambrush.load_sprite_file(concat!(
+    let trans_sprite = jambrush.load_sprite_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/assets/examples/transparent_square.png"
+    ));
+    let opaque_sprite = jambrush.load_sprite_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/examples/opaque_square.png"
     ));
 
     let mut depth_toggled = false;
@@ -63,9 +67,13 @@ fn main() {
                     false => [3., 2., 1.],
                 };
 
-                renderer.sprite(&sprite, ([16., 16.], d0, [1., 0., 0., 1.]));
-                renderer.sprite(&sprite, ([48., 48.], d1, [0., 1., 0., 1.]));
-                renderer.sprite(&sprite, ([72., 72.], d2, [0., 0., 1., 1.]));
+                renderer.sprite(&trans_sprite, ([16., 16.], d0, [1., 0., 0., 1.]));
+                renderer.sprite(&trans_sprite, ([48., 48.], d1, [0., 1., 0., 1.]));
+                renderer.sprite(&trans_sprite, ([72., 72.], d2, [0., 0., 1., 1.]));
+
+                renderer.sprite(&opaque_sprite, ([120., 16.], d0, [1., 0., 0., 1.]));
+                renderer.sprite(&opaque_sprite, ([152., 48.], d1, [0., 1., 0., 1.]));
+                renderer.sprite(&opaque_sprite, ([176., 72.], d2, [0., 0., 1., 1.]));
 
                 renderer.finish();
             }

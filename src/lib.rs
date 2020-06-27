@@ -67,7 +67,7 @@ struct Vertex {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-struct SpritePushConstants {
+struct SpriteData {
     pub transform: [[f32; 4]; 4],
     pub tint: [f32; 4],
     pub uv_origin: [f32; 2],
@@ -87,6 +87,7 @@ pub struct Sprite {
     grid: [u32; 2],
     cell: [u32; 2],
     size: [f32; 2],
+    transparent: bool,
 }
 
 impl Sprite {
@@ -102,6 +103,7 @@ pub struct SpriteSheet {
     width: u32,
     height: u32,
     size: [f32; 2],
+    transparent: bool,
 }
 
 impl SpriteSheet {
@@ -112,6 +114,7 @@ impl SpriteSheet {
             width: width as u32,
             height: height as u32,
             size: sprite.size,
+            transparent: sprite.transparent,
         }
     }
 
@@ -125,6 +128,7 @@ impl SpriteSheet {
             width,
             height,
             size: sprite.size,
+            transparent: sprite.transparent,
         }
     }
 
@@ -144,6 +148,7 @@ impl SpriteSheet {
                 self.size[0] / self.width as f32,
                 self.size[1] / self.height as f32,
             ],
+            transparent: self.transparent,
         }
     }
 }
@@ -213,7 +218,8 @@ struct GpuResources {
     blit_render_pass: TRenderPass,
     set_layout: TDescriptorSetLayout,
     pipeline_layout: TPipelineLayout,
-    rtt_pipeline: TGraphicsPipeline,
+    rtt_opaque_pipeline: TGraphicsPipeline,
+    rtt_trans_pipeline: TGraphicsPipeline,
     blit_pipeline: TGraphicsPipeline,
     desc_pool: TDescriptorPool,
     sprites_desc_set: TDescriptorSet,
@@ -250,7 +256,8 @@ impl GpuResources {
             blit_render_pass,
             set_layout,
             pipeline_layout,
-            rtt_pipeline,
+            rtt_opaque_pipeline,
+            rtt_trans_pipeline,
             blit_pipeline,
             desc_pool,
             texture_semaphore,
@@ -299,7 +306,8 @@ impl GpuResources {
             device.destroy_semaphore(texture_semaphore);
             device.destroy_descriptor_pool(desc_pool);
             device.destroy_graphics_pipeline(blit_pipeline);
-            device.destroy_graphics_pipeline(rtt_pipeline);
+            device.destroy_graphics_pipeline(rtt_trans_pipeline);
+            device.destroy_graphics_pipeline(rtt_opaque_pipeline);
             device.destroy_pipeline_layout(pipeline_layout);
             device.destroy_descriptor_set_layout(set_layout);
             device.destroy_command_pool(command_pool);
@@ -606,7 +614,7 @@ impl JamBrushSystem {
             device.create_shader_module(&spirv).unwrap()
         };
 
-        let rtt_pipeline = unsafe {
+        let rtt_opaque_pipeline = unsafe {
             let vs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
                 module: &vertex_shader_module,
@@ -649,6 +657,92 @@ impl JamBrushSystem {
                 depth: Some(DepthTest {
                     fun: Comparison::LessEqual,
                     write: true,
+                }),
+                depth_bounds: false,
+                stencil: None,
+            };
+
+            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
+                binding: 0,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                rate: VertexInputRate::Vertex,
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 0,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgba32Sfloat,
+                    offset: 0,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 1,
+                binding: 0,
+                element: Element {
+                    format: Format::Rg32Sfloat,
+                    offset: 16,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 2,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgb32Sfloat,
+                    offset: 24,
+                },
+            });
+
+            device
+                .create_graphics_pipeline(&pipeline_desc, None)
+                .expect("create_graphics_pipeline failed")
+        };
+
+        let rtt_trans_pipeline = unsafe {
+            let vs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &vertex_shader_module,
+                specialization: Default::default(),
+            };
+
+            let fs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &fragment_shader_module,
+                specialization: Default::default(),
+            };
+
+            let shader_entries = GraphicsShaderSet {
+                vertex: vs_entry,
+                hull: None,
+                domain: None,
+                geometry: None,
+                fragment: Some(fs_entry),
+            };
+
+            let subpass = Subpass {
+                index: 0,
+                main_pass: &rtt_render_pass,
+            };
+
+            let mut pipeline_desc = GraphicsPipelineDesc::new(
+                shader_entries,
+                Primitive::TriangleList,
+                Rasterizer::FILL,
+                &pipeline_layout,
+                subpass,
+            );
+
+            pipeline_desc.blender.targets.push(ColorBlendDesc {
+                mask: ColorMask::ALL,
+                blend: Some(BlendState::ALPHA),
+            });
+
+            pipeline_desc.depth_stencil = DepthStencilDesc {
+                depth: Some(DepthTest {
+                    fun: Comparison::LessEqual,
+                    write: false,
                 }),
                 depth_bounds: false,
                 stencil: None,
@@ -795,6 +889,7 @@ impl JamBrushSystem {
         let sprites_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
         let blit_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
 
+        // TODO: Pipeline barrier instead of semaphores?
         let texture_semaphore = device.create_semaphore().unwrap();
         let scene_semaphore = device.create_semaphore().unwrap();
         let frame_semaphore = device.create_semaphore().unwrap();
@@ -996,7 +1091,8 @@ impl JamBrushSystem {
                 blit_render_pass,
                 set_layout,
                 pipeline_layout,
-                rtt_pipeline,
+                rtt_opaque_pipeline,
+                rtt_trans_pipeline,
                 blit_pipeline,
                 desc_pool,
                 sprites_desc_set,
@@ -1159,7 +1255,12 @@ impl JamBrushSystem {
         }
     }
 
-    pub fn load_sprite_rgba(&mut self, size: [u32; 2], rgba_bytes: &[u8]) -> Sprite {
+    pub fn load_sprite_rgba(
+        &mut self,
+        size: [u32; 2],
+        rgba_bytes: &[u8],
+        transparent: bool,
+    ) -> Sprite {
         let sprite_index = self.cpu_cache.sprite_textures.len();
 
         let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
@@ -1178,14 +1279,17 @@ impl JamBrushSystem {
             grid: [1, 1],
             cell: [0, 0],
             size: [size[0] as f32, size[1] as f32],
+            transparent,
         }
     }
 
     pub fn load_sprite(&mut self, image_bytes: &[u8]) -> Sprite {
-        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let image = image::load_from_memory(&image_bytes).unwrap();
+        let transparent = image.color().has_alpha();
+        let image = image.to_rgba();
         let (w, h) = image.dimensions();
 
-        self.load_sprite_rgba([w, h], &image)
+        self.load_sprite_rgba([w, h], &image, transparent)
     }
 
     pub fn load_sprite_file<P: AsRef<Path>>(&mut self, path: P) -> Sprite {
@@ -1492,7 +1596,7 @@ pub struct Renderer<'a> {
     canvas_clear_color: [f32; 4],
     surface_image: ManuallyDrop<TSurfaceImage>,
     blit_command_buffer: Option<TCommandBuffer>,
-    sprites: Vec<(f32, SpritePushConstants)>,
+    sprites: Vec<((bool, f32), SpriteData)>,
     glyphs: Vec<(f32, Glyph)>,
     finished: bool,
     camera: [f32; 2],
@@ -1680,6 +1784,7 @@ impl<'a> Renderer<'a> {
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
         let tint = srgb_to_linear(args.tint);
+        let transparent = sprite.transparent || tint[3] < 1.;
 
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
@@ -1689,7 +1794,7 @@ impl<'a> Renderer<'a> {
         let [pos_x, pos_y] = args.pos;
         let [cam_x, cam_y] = self.camera;
 
-        let data = SpritePushConstants {
+        let data = SpriteData {
             transform: make_transform(
                 [pos_x - cam_x, pos_y - cam_y],
                 scale,
@@ -1700,7 +1805,7 @@ impl<'a> Renderer<'a> {
             uv_scale: [uw, uh],
         };
 
-        self.sprites.push((args.depth, data));
+        self.sprites.push(((transparent, args.depth), data));
     }
 
     pub fn text_with<'t, S: IntoLines<'t>>(
@@ -1987,7 +2092,7 @@ impl<'a> Renderer<'a> {
                     let uw = uv_rect.width();
                     let vh = uv_rect.height();
 
-                    SpritePushConstants {
+                    SpriteData {
                         transform: make_transform(
                             [x as f32, y as f32 + ascent],
                             [w, h],
@@ -1999,7 +2104,7 @@ impl<'a> Renderer<'a> {
                     }
                 };
 
-                self.sprites.push((depth, glyph_sprite));
+                self.sprites.push(((true, depth), glyph_sprite));
             }
         }
     }
@@ -2013,6 +2118,7 @@ impl<'a> Renderer<'a> {
         self.convert_glyphs_to_sprites();
 
         let gpu = self.draw_system.gpu.as_mut().unwrap();
+        let first_transparent_sprite_index: Option<usize>;
 
         // Upload all sprite data to sprites_buffer
         {
@@ -2020,8 +2126,9 @@ impl<'a> Renderer<'a> {
             sprite_data.clear();
 
             self.sprites.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            first_transparent_sprite_index = self.sprites.iter().position(|((trans, _), _)| *trans);
 
-            for (depth, sprite) in &self.sprites {
+            for ((_transparent, depth), sprite) in &self.sprites {
                 const BASE_VERTICES: &[([f32; 2], [f32; 2])] = &[
                     ([0., 0.], [0., 0.]),
                     ([0., 1.], [0., 1.]),
@@ -2074,16 +2181,6 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
-                command_buffer.bind_graphics_pipeline(&gpu.rtt_pipeline);
-                command_buffer
-                    .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], SubRange::WHOLE)]);
-                command_buffer.bind_graphics_descriptor_sets(
-                    &gpu.pipeline_layout,
-                    0,
-                    vec![&gpu.sprites_desc_set],
-                    &[],
-                );
-
                 command_buffer.begin_render_pass(
                     &gpu.rtt_render_pass,
                     &self.rtt_framebuffer,
@@ -2103,8 +2200,27 @@ impl<'a> Renderer<'a> {
                     ],
                     SubpassContents::Inline,
                 );
-                let vertex_count = self.sprites.len() as u32 * 6;
-                command_buffer.draw(0..vertex_count, 0..1);
+
+                command_buffer
+                    .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], SubRange::WHOLE)]);
+                command_buffer.bind_graphics_descriptor_sets(
+                    &gpu.pipeline_layout,
+                    0,
+                    vec![&gpu.sprites_desc_set],
+                    &[],
+                );
+
+                command_buffer.bind_graphics_pipeline(&gpu.rtt_opaque_pipeline);
+
+                let trans_start_index = first_transparent_sprite_index.unwrap_or(self.sprites.len()) as u32 * 6;
+                command_buffer.draw(0..trans_start_index, 0..1);
+
+                if first_transparent_sprite_index.is_some() {
+                    command_buffer.bind_graphics_pipeline(&gpu.rtt_trans_pipeline);
+
+                    let end_index = self.sprites.len() as u32 * 6;
+                    command_buffer.draw(trans_start_index..end_index, 0..1);
+                }
 
                 command_buffer.finish();
                 command_buffer
