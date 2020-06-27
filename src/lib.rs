@@ -209,10 +209,12 @@ struct GpuResources {
     device: TDevice,
     queue_group: TQueueGroup,
     command_pool: TCommandPool,
-    render_pass: TRenderPass,
+    rtt_render_pass: TRenderPass,
+    blit_render_pass: TRenderPass,
     set_layout: TDescriptorSetLayout,
     pipeline_layout: TPipelineLayout,
-    pipeline: TGraphicsPipeline,
+    rtt_pipeline: TGraphicsPipeline,
+    blit_pipeline: TGraphicsPipeline,
     desc_pool: TDescriptorPool,
     sprites_desc_set: TDescriptorSet,
     blit_desc_set: TDescriptorSet,
@@ -244,10 +246,12 @@ impl GpuResources {
             mut surface,
             device,
             command_pool,
-            render_pass,
+            rtt_render_pass,
+            blit_render_pass,
             set_layout,
             pipeline_layout,
-            pipeline,
+            rtt_pipeline,
+            blit_pipeline,
             desc_pool,
             texture_semaphore,
             scene_semaphore,
@@ -294,11 +298,13 @@ impl GpuResources {
             device.destroy_semaphore(scene_semaphore);
             device.destroy_semaphore(texture_semaphore);
             device.destroy_descriptor_pool(desc_pool);
-            device.destroy_graphics_pipeline(pipeline);
+            device.destroy_graphics_pipeline(blit_pipeline);
+            device.destroy_graphics_pipeline(rtt_pipeline);
             device.destroy_pipeline_layout(pipeline_layout);
             device.destroy_descriptor_set_layout(set_layout);
             device.destroy_command_pool(command_pool);
-            device.destroy_render_pass(render_pass);
+            device.destroy_render_pass(blit_render_pass);
+            device.destroy_render_pass(rtt_render_pass);
             surface.unconfigure_swapchain(&device);
         }
     }
@@ -494,9 +500,9 @@ impl JamBrushSystem {
         };
         let surface_depth_format = Format::D32SfloatS8Uint;
 
-        let render_pass = unsafe {
+        let rtt_render_pass = unsafe {
             let color_attachment = Attachment {
-                format: Some(surface_color_format),
+                format: Some(Format::Rgba8Srgb),
                 samples: 1,
                 ops: AttachmentOps::new(AttachmentLoadOp::Clear, AttachmentStoreOp::Store),
                 stencil_ops: AttachmentOps::DONT_CARE,
@@ -521,6 +527,28 @@ impl JamBrushSystem {
 
             device
                 .create_render_pass(&[color_attachment, depth_attachment], &[subpass], &[])
+                .unwrap()
+        };
+
+        let blit_render_pass = unsafe {
+            let color_attachment = Attachment {
+                format: Some(surface_color_format),
+                samples: 1,
+                ops: AttachmentOps::new(AttachmentLoadOp::Clear, AttachmentStoreOp::Store),
+                stencil_ops: AttachmentOps::DONT_CARE,
+                layouts: Layout::Undefined..Layout::Present,
+            };
+
+            let subpass = SubpassDesc {
+                colors: &[(0, Layout::ColorAttachmentOptimal)],
+                depth_stencil: None,
+                inputs: &[],
+                resolves: &[],
+                preserves: &[],
+            };
+
+            device
+                .create_render_pass(&[color_attachment], &[subpass], &[])
                 .unwrap()
         };
 
@@ -578,7 +606,7 @@ impl JamBrushSystem {
             device.create_shader_module(&spirv).unwrap()
         };
 
-        let pipeline = unsafe {
+        let rtt_pipeline = unsafe {
             let vs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
                 module: &vertex_shader_module,
@@ -601,7 +629,7 @@ impl JamBrushSystem {
 
             let subpass = Subpass {
                 index: 0,
-                main_pass: &render_pass,
+                main_pass: &rtt_render_pass,
             };
 
             let mut pipeline_desc = GraphicsPipelineDesc::new(
@@ -625,6 +653,83 @@ impl JamBrushSystem {
                 depth_bounds: false,
                 stencil: None,
             };
+
+            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
+                binding: 0,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                rate: VertexInputRate::Vertex,
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 0,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgba32Sfloat,
+                    offset: 0,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 1,
+                binding: 0,
+                element: Element {
+                    format: Format::Rg32Sfloat,
+                    offset: 16,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 2,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgb32Sfloat,
+                    offset: 24,
+                },
+            });
+
+            device
+                .create_graphics_pipeline(&pipeline_desc, None)
+                .expect("create_graphics_pipeline failed")
+        };
+
+        let blit_pipeline = unsafe {
+            let vs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &vertex_shader_module,
+                specialization: Default::default(),
+            };
+
+            let fs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &fragment_shader_module,
+                specialization: Default::default(),
+            };
+
+            let shader_entries = GraphicsShaderSet {
+                vertex: vs_entry,
+                hull: None,
+                domain: None,
+                geometry: None,
+                fragment: Some(fs_entry),
+            };
+
+            let subpass = Subpass {
+                index: 0,
+                main_pass: &blit_render_pass,
+            };
+
+            let mut pipeline_desc = GraphicsPipelineDesc::new(
+                shader_entries,
+                Primitive::TriangleList,
+                Rasterizer::FILL,
+                &pipeline_layout,
+                subpass,
+            );
+
+            pipeline_desc.blender.targets.push(ColorBlendDesc {
+                mask: ColorMask::ALL,
+                blend: Some(BlendState::ALPHA),
+            });
 
             pipeline_desc.vertex_buffers.push(VertexBufferDesc {
                 binding: 0,
@@ -887,10 +992,12 @@ impl JamBrushSystem {
                 device,
                 queue_group,
                 command_pool,
-                render_pass,
+                rtt_render_pass,
+                blit_render_pass,
                 set_layout,
                 pipeline_layout,
-                pipeline,
+                rtt_pipeline,
+                blit_pipeline,
                 desc_pool,
                 sprites_desc_set,
                 blit_desc_set,
@@ -1349,20 +1456,23 @@ impl JamBrushSystem {
     }
 
     pub fn window_scale(&self) -> Option<u32> {
-        self.gpu.as_ref().map(|gpu| {
-            let [vwidth, vheight] = self.window_data.resolution;
-            let scale = self.window_data.dpi_factor;
+        self.gpu
+            .as_ref()
+            .map(|gpu| {
+                let [vwidth, vheight] = self.window_data.resolution;
+                let scale = self.window_data.dpi_factor;
 
-            let base_width = (f64::from(vwidth) * scale) as u32;
-            let base_height = (f64::from(vheight) * scale) as u32;
+                let base_width = (f64::from(vwidth) * scale) as u32;
+                let base_height = (f64::from(vheight) * scale) as u32;
 
-            let integer_scale = std::cmp::min(
-                gpu.surface_extent.width / base_width,
-                gpu.surface_extent.height / base_height,
-            );
+                let integer_scale = std::cmp::min(
+                    gpu.surface_extent.width / base_width,
+                    gpu.surface_extent.height / base_height,
+                );
 
-            integer_scale
-        }).filter(|&n| n > 0)
+                integer_scale
+            })
+            .filter(|&n| n > 0)
     }
 
     pub fn fullscreen(&self) -> bool {
@@ -1406,7 +1516,7 @@ impl<'a> Renderer<'a> {
 
         let surface_image: TSurfaceImage;
         let blit_command_buffer: TCommandBuffer;
-        let framebuffer: TFramebuffer;
+        let blit_framebuffer: TFramebuffer;
         let rtt_framebuffer: TFramebuffer;
 
         unsafe {
@@ -1424,7 +1534,7 @@ impl<'a> Renderer<'a> {
             rtt_framebuffer = gpu
                 .device
                 .create_framebuffer(
-                    &gpu.render_pass,
+                    &gpu.rtt_render_pass,
                     vec![&gpu.rtt_view, &gpu.depth_view],
                     Extent {
                         width: surface_extent.width,
@@ -1434,10 +1544,10 @@ impl<'a> Renderer<'a> {
                 )
                 .expect("Failed to create framebuffer");
 
-            framebuffer = gpu
+            blit_framebuffer = gpu
                 .device
                 .create_framebuffer(
-                    &gpu.render_pass,
+                    &gpu.rtt_render_pass,
                     vec![surface_image.borrow(), &gpu.depth_view],
                     Extent {
                         width: surface_extent.width,
@@ -1490,7 +1600,7 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
-                command_buffer.bind_graphics_pipeline(&gpu.pipeline);
+                command_buffer.bind_graphics_pipeline(&gpu.blit_pipeline);
                 command_buffer
                     .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[0], SubRange::WHOLE)]);
                 command_buffer.bind_graphics_descriptor_sets(
@@ -1501,22 +1611,14 @@ impl<'a> Renderer<'a> {
                 );
 
                 command_buffer.begin_render_pass(
-                    &gpu.render_pass,
-                    &framebuffer,
+                    &gpu.blit_render_pass,
+                    &blit_framebuffer,
                     viewport.rect,
-                    &[
-                        ClearValue {
-                            color: ClearColor {
-                                float32: border_clear_color,
-                            },
+                    &[ClearValue {
+                        color: ClearColor {
+                            float32: border_clear_color,
                         },
-                        ClearValue {
-                            depth_stencil: ClearDepthStencil {
-                                depth: 1.,
-                                stencil: 0,
-                            },
-                        },
-                    ],
+                    }],
                     SubpassContents::Inline,
                 );
 
@@ -1536,7 +1638,7 @@ impl<'a> Renderer<'a> {
             glyphs: vec![],
             finished: false,
             camera: [0., 0.],
-            framebuffer: ManuallyDrop::new(framebuffer),
+            framebuffer: ManuallyDrop::new(blit_framebuffer),
             rtt_framebuffer: ManuallyDrop::new(rtt_framebuffer),
         }
     }
@@ -1972,7 +2074,7 @@ impl<'a> Renderer<'a> {
                 command_buffer.set_viewports(0, &[viewport.clone()]);
                 command_buffer.set_scissors(0, &[viewport.rect]);
 
-                command_buffer.bind_graphics_pipeline(&gpu.pipeline);
+                command_buffer.bind_graphics_pipeline(&gpu.rtt_pipeline);
                 command_buffer
                     .bind_vertex_buffers(0, vec![(&gpu.vertex_buffers[1], SubRange::WHOLE)]);
                 command_buffer.bind_graphics_descriptor_sets(
@@ -1983,7 +2085,7 @@ impl<'a> Renderer<'a> {
                 );
 
                 command_buffer.begin_render_pass(
-                    &gpu.render_pass,
+                    &gpu.rtt_render_pass,
                     &self.rtt_framebuffer,
                     viewport.rect,
                     &[
