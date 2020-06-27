@@ -1274,6 +1274,16 @@ impl JamBrushSystem {
             sprite_index, size[0], size[1]
         ));
 
+        if self.debugging {
+            let has_transparent_pixels = rgba_bytes.iter().skip(3).step_by(4).any(|&value| value != 255);
+            if has_transparent_pixels != transparent {
+                match transparent {
+                    true => eprintln!("WARNING: Sprite was labelled `transparent` but has no transparent pixels"),
+                    false => eprintln!("WARNING: Sprite was not labelled `transparent` but has transparent pixels"),
+                }
+            }
+        }
+
         Sprite {
             id: sprite_index,
             grid: [1, 1],
