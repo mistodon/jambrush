@@ -12,6 +12,7 @@ dx11 = ["gfx-backend-dx11"]
 [dependencies]
 gfx-hal = "=0.5.0"
 image = "~0.23.2"
+structopt = "~0.3.15"
 texture_packer = "~0.21.0"
 winit = "=0.21.0"
 
