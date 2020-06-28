@@ -49,7 +49,7 @@ use crate::gfxutils::*;
 
 const WHITE: [f32; 4] = [1., 1., 1., 1.];
 const MAX_SPRITE_COUNT: usize = 100000; // TODO: Make dynamic
-const MAX_DEPTH: f32 = 10000.; // TODO: Let this be customizable
+const MAX_DEPTH: f32 = 65535.; // TODO: Let this be customizable
 
 fn srgb_to_linear(color: [f32; 4]) -> [f32; 4] {
     const FACTOR: f32 = 2.2;
@@ -63,6 +63,7 @@ struct Vertex {
     pub tint: [f32; 4],
     pub uv: [f32; 2],
     pub offset: [f32; 3],
+    pub depth_uv_scale_add: [f32; 4],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -172,6 +173,7 @@ pub struct JamBrushConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
     TextureAtlas,
+    DepthTextureAtlas,
     Canvas,
     // TODO: Window,
 }
@@ -196,9 +198,10 @@ struct InitInfo {
 }
 
 struct CpuSideCache {
-    sprite_textures: Vec<RgbaImage>,
+    sprite_textures: Vec<(RgbaImage, Option<DepthImage>)>,
     sprite_regions: Vec<([f32; 2], [f32; 2], [f32; 2])>,
     atlas_image: RgbaImage,
+    depth_atlas_image: DepthImage,
     sprite_vertex_data: Vec<Vertex>,
     fonts: Vec<RTFont<'static>>,
     glyph_cache: RTCache<'static>,
@@ -223,6 +226,7 @@ struct GpuResources {
     blit_pipeline: TGraphicsPipeline,
     desc_pool: TDescriptorPool,
     sprites_desc_set: TDescriptorSet,
+    depth_sprites_desc_set: TDescriptorSet,
     blit_desc_set: TDescriptorSet,
     texture_semaphore: TSemaphore,
     scene_semaphore: TSemaphore,
@@ -240,6 +244,10 @@ struct GpuResources {
     atlas_memory: TMemory,
     atlas_view: TImageView,
     atlas_sampler: TSampler,
+    depth_atlas_texture: TImage,
+    depth_atlas_memory: TMemory,
+    depth_atlas_view: TImageView,
+    depth_atlas_sampler: TSampler,
     vertex_buffers: Vec<TBuffer>,
     vertex_memories: Vec<TMemory>,
     surface_extent: Extent2D,
@@ -276,12 +284,20 @@ impl GpuResources {
             atlas_memory,
             atlas_view,
             atlas_sampler,
+            depth_atlas_texture,
+            depth_atlas_memory,
+            depth_atlas_view,
+            depth_atlas_sampler,
             vertex_buffers,
             vertex_memories,
             ..
         } = self;
 
         unsafe {
+            device.destroy_sampler(depth_atlas_sampler);
+            device.destroy_image_view(depth_atlas_view);
+            device.free_memory(depth_atlas_memory);
+            device.destroy_image(depth_atlas_texture);
             device.destroy_sampler(atlas_sampler);
             device.destroy_image_view(atlas_view);
             device.free_memory(atlas_memory);
@@ -614,6 +630,26 @@ impl JamBrushSystem {
             device.create_shader_module(&spirv).unwrap()
         };
 
+        let blit_vertex_shader_module = unsafe {
+            let spirv = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/compiled/blit.vert.spv"
+            ));
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
+        };
+
+        let blit_fragment_shader_module = unsafe {
+            let spirv = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/compiled/blit.frag.spv"
+            ));
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
+        };
+
         let rtt_opaque_pipeline = unsafe {
             let vs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
@@ -789,13 +825,13 @@ impl JamBrushSystem {
         let blit_pipeline = unsafe {
             let vs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
-                module: &vertex_shader_module,
+                module: &blit_vertex_shader_module,
                 specialization: Default::default(),
             };
 
             let fs_entry = EntryPoint::<backend::Backend> {
                 entry: "main",
-                module: &fragment_shader_module,
+                module: &blit_fragment_shader_module,
                 specialization: Default::default(),
             };
 
@@ -874,11 +910,11 @@ impl JamBrushSystem {
                                     with_sampler: false,
                                 },
                             },
-                            count: 2,
+                            count: 3,
                         },
                         DescriptorRangeDesc {
                             ty: DescriptorType::Sampler,
-                            count: 2,
+                            count: 3,
                         },
                     ],
                     DescriptorPoolCreateFlags::empty(),
@@ -887,6 +923,7 @@ impl JamBrushSystem {
         };
 
         let sprites_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
+        let depth_sprites_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
         let blit_desc_set = unsafe { desc_pool.allocate_set(&set_layout).unwrap() };
 
         // TODO: Pipeline barrier instead of semaphores?
@@ -918,31 +955,37 @@ impl JamBrushSystem {
                         offset: [-1., -1., 0.],
                         uv: [0., 1. - QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                     Vertex {
                         offset: [-1., 1., 0.],
                         uv: [0., QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                     Vertex {
                         offset: [1., -1., 0.],
                         uv: [1., 1. - QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                     Vertex {
                         offset: [-1., 1., 0.],
                         uv: [0., QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                     Vertex {
                         offset: [1., 1., 0.],
                         uv: [1., QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                     Vertex {
                         offset: [1., -1., 0.],
                         uv: [1., 1. - QY],
                         tint: WHITE,
+                        depth_uv_scale_add: [0.; 4],
                     },
                 ],
             )
@@ -1037,6 +1080,24 @@ impl JamBrushSystem {
             (texture_image, texture_memory, texture_view, texture_sampler)
         };
 
+        let (depth_atlas_texture, depth_atlas_memory, depth_atlas_view, depth_atlas_sampler) = unsafe {
+            let (texture_image, texture_memory, texture_view) = utils::create_image(
+                &device,
+                &memory_types,
+                atlas_size,
+                atlas_size, // TODO: Probably too big
+                Format::R16Sfloat,
+                img::Usage::TRANSFER_DST | img::Usage::SAMPLED,
+                Aspects::COLOR,
+            );
+
+            let texture_sampler = device
+                .create_sampler(&SamplerDesc::new(Filter::Nearest, WrapMode::Clamp))
+                .unwrap();
+
+            (texture_image, texture_memory, texture_view, texture_sampler)
+        };
+
         unsafe {
             device.write_descriptor_sets(vec![
                 DescriptorSetWrite {
@@ -1065,6 +1126,21 @@ impl JamBrushSystem {
                     binding: 1,
                     array_offset: 0,
                     descriptors: Some(Descriptor::Sampler(&atlas_sampler)),
+                },
+            ]);
+
+            device.write_descriptor_sets(vec![
+                DescriptorSetWrite {
+                    set: &depth_sprites_desc_set,
+                    binding: 0,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Image(&depth_atlas_view, Layout::Undefined)),
+                },
+                DescriptorSetWrite {
+                    set: &depth_sprites_desc_set,
+                    binding: 1,
+                    array_offset: 0,
+                    descriptors: Some(Descriptor::Sampler(&depth_atlas_sampler)),
                 },
             ]);
         }
@@ -1096,6 +1172,7 @@ impl JamBrushSystem {
                 blit_pipeline,
                 desc_pool,
                 sprites_desc_set,
+                depth_sprites_desc_set,
                 blit_desc_set,
                 texture_semaphore,
                 scene_semaphore,
@@ -1113,6 +1190,10 @@ impl JamBrushSystem {
                 atlas_memory,
                 atlas_view,
                 atlas_sampler,
+                depth_atlas_texture,
+                depth_atlas_memory,
+                depth_atlas_view,
+                depth_atlas_sampler,
                 vertex_buffers,
                 vertex_memories,
                 surface_extent: Extent2D {
@@ -1143,6 +1224,7 @@ impl JamBrushSystem {
 
         let mut atlas_image =
             DynamicImage::new_rgba8(init_info.atlas_size, init_info.atlas_size).to_rgba();
+        let depth_atlas_image = DepthImage::new(init_info.atlas_size, init_info.atlas_size);
 
         if config.debug_texture_atlas {
             for (x, y, pixel) in atlas_image.enumerate_pixels_mut() {
@@ -1167,6 +1249,7 @@ impl JamBrushSystem {
                 sprite_textures: vec![],
                 sprite_regions: vec![],
                 atlas_image,
+                depth_atlas_image,
                 sprite_vertex_data: Vec::with_capacity(MAX_SPRITE_COUNT * 6),
                 fonts: vec![],
                 glyph_cache,
@@ -1261,11 +1344,27 @@ impl JamBrushSystem {
         rgba_bytes: &[u8],
         transparent: bool,
     ) -> Sprite {
+        self.load_sprite_with_depth_internal(size, rgba_bytes, transparent, None)
+    }
+
+    fn load_sprite_with_depth_internal(
+        &mut self,
+        size: [u32; 2],
+        rgba_bytes: &[u8],
+        transparent: bool,
+        depth_values: Option<&[u16]>,
+    ) -> Sprite {
         let sprite_index = self.cpu_cache.sprite_textures.len();
 
         let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
             .expect("Failed to create image from bytes");
-        self.cpu_cache.sprite_textures.push(sprite_img);
+
+        let depth_img = depth_values.map(|depth_values| {
+            DepthImage::from_raw(size[0], size[1], depth_values.to_owned())
+                .expect("Failed to create depth image from values")
+        });
+
+        self.cpu_cache.sprite_textures.push((sprite_img, depth_img)); // TODO: push (color_image, OOption<depth_image>) and upload to matching locations in depth atlas
 
         self.sprite_atlas_outdated = true;
 
@@ -1275,11 +1374,19 @@ impl JamBrushSystem {
         ));
 
         if self.debugging {
-            let has_transparent_pixels = rgba_bytes.iter().skip(3).step_by(4).any(|&value| value != 255);
+            let has_transparent_pixels = rgba_bytes
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .any(|&value| value != 255);
             if has_transparent_pixels != transparent {
                 match transparent {
-                    true => eprintln!("WARNING: Sprite was labelled `transparent` but has no transparent pixels"),
-                    false => eprintln!("WARNING: Sprite was not labelled `transparent` but has transparent pixels"),
+                    true => eprintln!(
+                        "WARNING: Sprite was labelled `transparent` but has no transparent pixels"
+                    ),
+                    false => eprintln!(
+                        "WARNING: Sprite was not labelled `transparent` but has transparent pixels"
+                    ),
                 }
             }
         }
@@ -1308,13 +1415,51 @@ impl JamBrushSystem {
         self.load_sprite(&image_bytes)
     }
 
+    pub fn load_sprite_rgba_with_depth(
+        &mut self,
+        size: [u32; 2],
+        rgba_bytes: &[u8],
+        transparent: bool,
+        depth_values: &[u16],
+    ) -> Sprite {
+        self.load_sprite_with_depth_internal(size, rgba_bytes, transparent, Some(depth_values))
+    }
+
+    pub fn load_sprite_with_depth(
+        &mut self,
+        image_bytes: &[u8],
+        depth_image_bytes: &[u8],
+    ) -> Sprite {
+        let image = image::load_from_memory(&image_bytes).unwrap();
+        let transparent = image.color().has_alpha();
+        let image = image.to_rgba();
+        let (w, h) = image.dimensions();
+
+        let depth_image = image::load_from_memory(&depth_image_bytes).unwrap();
+        let depth_image = depth_image.as_luma16().unwrap();
+        assert!(depth_image.dimensions() == (w, h));
+
+        self.load_sprite_rgba_with_depth([w, h], &image, transparent, depth_image)
+    }
+
+    pub fn load_sprite_file_with_depth<P: AsRef<Path>, Q: AsRef<Path>>(
+        &mut self,
+        path: P,
+        depth_path: Q,
+    ) -> Sprite {
+        let image_bytes = std::fs::read(path.as_ref()).unwrap();
+        let depth_image_bytes = std::fs::read(depth_path.as_ref()).unwrap();
+
+        self.load_sprite_with_depth(&image_bytes, &depth_image_bytes)
+    }
+
     pub fn reload_sprite_rgba(&mut self, sprite: &Sprite, size: [u32; 2], rgba_bytes: &[u8]) {
         let [w, h] = sprite.size;
         let [w, h] = [w as u32, h as u32];
 
         let sprite_img: RgbaImage = RgbaImage::from_raw(size[0], size[1], rgba_bytes.to_owned())
             .expect("Failed to reload image from bytes");
-        self.cpu_cache.sprite_textures[sprite.id] = sprite_img;
+        self.cpu_cache.sprite_textures[sprite.id].0 = sprite_img;
 
         self.sprite_atlas_outdated = true;
 
@@ -1373,7 +1518,7 @@ impl JamBrushSystem {
             // TODO: We can store this now! Don't recreate it every time!
             let mut atlas_packer = TexturePacker::new_skyline(atlas_config);
 
-            for (index, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
+            for (index, (texture, _)) in self.cpu_cache.sprite_textures.iter().enumerate() {
                 // TODO: ugh, string keys?
                 atlas_packer
                     .pack_ref(index.to_string(), texture)
@@ -1381,7 +1526,7 @@ impl JamBrushSystem {
             }
 
             self.cpu_cache.sprite_regions.clear();
-            for (i, texture) in self.cpu_cache.sprite_textures.iter().enumerate() {
+            for (i, (texture, depth_texture)) in self.cpu_cache.sprite_textures.iter().enumerate() {
                 let frame = atlas_packer
                     .get_frame(&i.to_string())
                     .expect("Failed to get frame in atlas for sprite")
@@ -1398,6 +1543,13 @@ impl JamBrushSystem {
                     .atlas_image
                     .copy_from(texture, frame.x, frame.y)
                     .expect("Copy to atlas image failed");
+
+                if let Some(depth_texture) = depth_texture {
+                    self.cpu_cache
+                        .depth_atlas_image
+                        .copy_from(depth_texture, frame.x, frame.y)
+                        .expect("Copy to depth atlas image failed");
+                }
             }
         }
 
@@ -1416,8 +1568,20 @@ impl JamBrushSystem {
                 &mut gpu.command_pool,
                 &mut gpu.queue_group.queues[0],
                 &gpu.texture_fence,
-                &self.cpu_cache.atlas_image,
+                Some(&self.cpu_cache.atlas_image),
+                None,
                 &gpu.atlas_texture,
+            );
+
+            utils::upload_image_data(
+                &gpu.device,
+                &gpu.adapter.physical_device,
+                &mut gpu.command_pool,
+                &mut gpu.queue_group.queues[0],
+                &gpu.texture_fence,
+                None,
+                Some(&self.cpu_cache.depth_atlas_image),
+                &gpu.depth_atlas_texture,
             );
         }
     }
@@ -1462,6 +1626,7 @@ impl JamBrushSystem {
             let image = match capture_type {
                 Capture::Canvas => &gpu.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &gpu.atlas_texture,
+                Capture::DepthTextureAtlas => &gpu.depth_atlas_texture,
             };
 
             let footprint = gpu.device.get_image_subresource_footprint(
@@ -1484,7 +1649,11 @@ impl JamBrushSystem {
                 memory_size as usize,
             );
 
-            let width = footprint.row_pitch as u32 / 4;
+            let bytes_per_pixel = match capture_type {
+                Capture::DepthTextureAtlas => 2,
+                _ => 4,
+            };
+            let width = footprint.row_pitch as u32 / bytes_per_pixel;
             let height = memory_size as u32 / footprint.row_pitch as u32;
 
             let submit = {
@@ -1543,7 +1712,11 @@ impl JamBrushSystem {
         use image::ColorType;
 
         let (size, image_bytes) = self.capture_image(capture_type);
-        image::save_buffer(path, &image_bytes, size[0], size[1], ColorType::Rgba8).unwrap();
+        let color_type = match capture_type {
+            Capture::DepthTextureAtlas => ColorType::L16,
+            _ => ColorType::Rgba8,
+        };
+        image::save_buffer(path, &image_bytes, size[0], size[1], color_type).unwrap();
     }
 
     pub fn recording(&mut self) -> bool {
@@ -2163,6 +2336,7 @@ impl<'a> Renderer<'a> {
                         offset: [ox + sx * x, oy + sy * y, z],
                         tint: sprite.tint,
                         uv: [ou + su * u, ov + sv * v],
+                        depth_uv_scale_add: [0.; 4],
                     });
                 }
             }
@@ -2216,13 +2390,14 @@ impl<'a> Renderer<'a> {
                 command_buffer.bind_graphics_descriptor_sets(
                     &gpu.pipeline_layout,
                     0,
-                    vec![&gpu.sprites_desc_set],
+                    vec![&gpu.sprites_desc_set, &gpu.depth_sprites_desc_set],
                     &[],
                 );
 
                 command_buffer.bind_graphics_pipeline(&gpu.rtt_opaque_pipeline);
 
-                let trans_start_index = first_transparent_sprite_index.unwrap_or(self.sprites.len()) as u32 * 6;
+                let trans_start_index =
+                    first_transparent_sprite_index.unwrap_or(self.sprites.len()) as u32 * 6;
                 command_buffer.draw(0..trans_start_index, 0..1);
 
                 if first_transparent_sprite_index.is_some() {

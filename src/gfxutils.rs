@@ -33,6 +33,8 @@ pub use gfx_hal::{
 use gfx_hal::Backend;
 use image::RgbaImage;
 
+pub type DepthImage = image::ImageBuffer<image::Luma<u16>, Vec<u16>>;
+
 pub type TBuffer = <::backend::Backend as Backend>::Buffer;
 pub type TCommandBuffer = <::backend::Backend as Backend>::CommandBuffer;
 pub type TCommandPool = <::backend::Backend as Backend>::CommandPool;
@@ -189,15 +191,16 @@ pub mod utils {
         command_pool: &mut TCommandPool,
         queue: &mut TCommandQueue,
         fence: &TFence,
-        src_image: &RgbaImage,
+        src_image: Option<&RgbaImage>,
+        src_depth: Option<&DepthImage>,
         dst_image: &TImage,
     ) {
-        let (width, height) = src_image.dimensions();
+        let (width, height) = src_image.map(|img| img.dimensions()).unwrap_or_else(|| src_depth.unwrap().dimensions());
+        let image_stride = src_image.map(|_| 4_usize).unwrap_or(1_usize);
 
         let memory_types = physical_device.memory_properties().memory_types;
         let row_alignment_mask =
             physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
-        let image_stride = 4usize;
         let row_pitch = (width * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
         let upload_size = u64::from(height * row_pitch);
 
@@ -214,15 +217,28 @@ pub mod utils {
                 .map_memory(&image_upload_memory, Segment::ALL)
                 .expect("map_memory failed");
 
-            for y in 0..height as usize {
-                let row = &(**src_image)[y * (width as usize) * image_stride
-                    ..(y + 1) * (width as usize) * image_stride];
+            if let Some(src_image) = src_image {
+                for y in 0..height as usize {
+                    let row = &(**src_image)[y * (width as usize) * image_stride
+                        ..(y + 1) * (width as usize) * image_stride];
 
-                std::ptr::copy_nonoverlapping(
-                    row.as_ptr(),
-                    mapped_memory.offset(y as isize * row_pitch as isize),
-                    width as usize * image_stride,
-                );
+                    std::ptr::copy_nonoverlapping(
+                        row.as_ptr(),
+                        mapped_memory.offset(y as isize * row_pitch as isize),
+                        width as usize * image_stride,
+                    );
+                }
+            } else if let Some(src_image) = src_depth {
+                for y in 0..height as usize {
+                    let row = &(**src_image)[y * (width as usize) * image_stride
+                        ..(y + 1) * (width as usize) * image_stride];
+
+                    std::ptr::copy_nonoverlapping(
+                        row.as_ptr() as *mut u8,
+                        mapped_memory.offset(y as isize * row_pitch as isize),
+                        width as usize * image_stride,
+                    );
+                }
             }
 
             device
