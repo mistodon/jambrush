@@ -2,10 +2,7 @@ Next
 ===
 
 - OpenGL depth:
-    - Add a way to screencap the depth buffer (in any example)
-    - Try to use this to debug and fix depth_sorting and depth_mapping examples
-        - It seems like the depth buffer is not being correctly cleared...
-    - Once it all works, set up depth differently when opengl feature is enabled
+    - Set up depth differently when opengl feature is enabled
         - Different depth atlas format (Uint), different shader, etc.
     - Make UX better for drawing sprites with depth
 
