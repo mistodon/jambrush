@@ -1976,8 +1976,8 @@ impl<'a> Renderer<'a> {
             blit_framebuffer = gpu
                 .device
                 .create_framebuffer(
-                    &gpu.rtt_render_pass,
-                    vec![surface_image.borrow(), &gpu.depth_view],
+                    &gpu.blit_render_pass,
+                    vec![surface_image.borrow()],
                     Extent {
                         width: surface_extent.width,
                         height: surface_extent.height,
@@ -2593,6 +2593,13 @@ impl<'a> Renderer<'a> {
 
                     let end_index = self.sprites.len() as u32 * 6;
                     command_buffer.draw(trans_start_index..end_index, 0..1);
+                }
+
+                // Dumb hack to switch depth write back on so it gets cleared
+                // TODO: Should be fixed in later gfx_backend_gl versions
+                #[cfg(feature = "opengl")]
+                {
+                    command_buffer.bind_graphics_pipeline(&gpu.rtt_opaque_pipeline);
                 }
 
                 command_buffer.finish();
