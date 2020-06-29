@@ -196,7 +196,7 @@ pub mod utils {
         dst_image: &TImage,
     ) {
         let (width, height) = src_image.map(|img| img.dimensions()).unwrap_or_else(|| src_depth.unwrap().dimensions());
-        let image_stride = src_image.map(|_| 4_usize).unwrap_or(1_usize);
+        let image_stride = src_image.map(|_| 4_usize).unwrap_or(2_usize);
 
         let memory_types = physical_device.memory_properties().memory_types;
         let row_alignment_mask =
@@ -229,12 +229,17 @@ pub mod utils {
                     );
                 }
             } else if let Some(src_image) = src_depth {
+                let src_image_bytes: &[u8] = {
+                    let p: *const u16 = src_image.as_ptr();
+                    let len = src_image.len();
+                    std::slice::from_raw_parts(p as *const u8, len * 2)
+                };
                 for y in 0..height as usize {
-                    let row = &(**src_image)[y * (width as usize) * image_stride
+                    let row = &(*src_image_bytes)[y * (width as usize) * image_stride
                         ..(y + 1) * (width as usize) * image_stride];
 
                     std::ptr::copy_nonoverlapping(
-                        row.as_ptr() as *mut u8,
+                        row.as_ptr(),
                         mapped_memory.offset(y as isize * row_pitch as isize),
                         width as usize * image_stride,
                     );

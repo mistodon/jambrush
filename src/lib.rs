@@ -63,7 +63,7 @@ struct Vertex {
     pub tint: [f32; 4],
     pub uv: [f32; 2],
     pub offset: [f32; 3],
-    pub depth_uv_scale_add: [f32; 4],
+    pub depth_scale_add: [f32; 2],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +73,8 @@ struct SpriteData {
     pub tint: [f32; 4],
     pub uv_origin: [f32; 2],
     pub uv_scale: [f32; 2],
+    pub depth_scale_add: [f32; 2],
+    pub depth_mapped: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +224,7 @@ struct GpuResources {
     set_layout: TDescriptorSetLayout,
     pipeline_layout: TPipelineLayout,
     rtt_opaque_pipeline: TGraphicsPipeline,
+    rtt_depthmapped_pipeline: TGraphicsPipeline,
     rtt_trans_pipeline: TGraphicsPipeline,
     blit_pipeline: TGraphicsPipeline,
     desc_pool: TDescriptorPool,
@@ -265,6 +268,7 @@ impl GpuResources {
             set_layout,
             pipeline_layout,
             rtt_opaque_pipeline,
+            rtt_depthmapped_pipeline,
             rtt_trans_pipeline,
             blit_pipeline,
             desc_pool,
@@ -323,6 +327,7 @@ impl GpuResources {
             device.destroy_descriptor_pool(desc_pool);
             device.destroy_graphics_pipeline(blit_pipeline);
             device.destroy_graphics_pipeline(rtt_trans_pipeline);
+            device.destroy_graphics_pipeline(rtt_depthmapped_pipeline);
             device.destroy_graphics_pipeline(rtt_opaque_pipeline);
             device.destroy_pipeline_layout(pipeline_layout);
             device.destroy_descriptor_set_layout(set_layout);
@@ -606,7 +611,7 @@ impl JamBrushSystem {
 
         let pipeline_layout = unsafe {
             device
-                .create_pipeline_layout(vec![&set_layout], &[])
+                .create_pipeline_layout(vec![&set_layout, &set_layout], &[])
                 .unwrap()
         };
 
@@ -624,6 +629,26 @@ impl JamBrushSystem {
             let spirv = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.frag.spv"
+            ));
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
+        };
+
+        let depth_vertex_shader_module = unsafe {
+            let spirv = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/compiled/depth_sprite.vert.spv"
+            ));
+            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
+                .expect("Invalid SPIR-V");
+            device.create_shader_module(&spirv).unwrap()
+        };
+
+        let depth_fragment_shader_module = unsafe {
+            let spirv = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/compiled/depth_sprite.frag.spv"
             ));
             let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
                 .expect("Invalid SPIR-V");
@@ -728,6 +753,101 @@ impl JamBrushSystem {
                 element: Element {
                     format: Format::Rgb32Sfloat,
                     offset: 24,
+                },
+            });
+
+            device
+                .create_graphics_pipeline(&pipeline_desc, None)
+                .expect("create_graphics_pipeline failed")
+        };
+
+        let rtt_depthmapped_pipeline = unsafe {
+            let vs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &depth_vertex_shader_module,
+                specialization: Default::default(),
+            };
+
+            let fs_entry = EntryPoint::<backend::Backend> {
+                entry: "main",
+                module: &depth_fragment_shader_module,
+                specialization: Default::default(),
+            };
+
+            let shader_entries = GraphicsShaderSet {
+                vertex: vs_entry,
+                hull: None,
+                domain: None,
+                geometry: None,
+                fragment: Some(fs_entry),
+            };
+
+            let subpass = Subpass {
+                index: 0,
+                main_pass: &rtt_render_pass,
+            };
+
+            let mut pipeline_desc = GraphicsPipelineDesc::new(
+                shader_entries,
+                Primitive::TriangleList,
+                Rasterizer::FILL,
+                &pipeline_layout,
+                subpass,
+            );
+
+            pipeline_desc.blender.targets.push(ColorBlendDesc {
+                mask: ColorMask::ALL,
+                blend: Some(BlendState::ALPHA),
+            });
+
+            pipeline_desc.depth_stencil = DepthStencilDesc {
+                depth: Some(DepthTest {
+                    fun: Comparison::LessEqual,
+                    write: true,
+                }),
+                depth_bounds: false,
+                stencil: None,
+            };
+
+            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
+                binding: 0,
+                stride: std::mem::size_of::<Vertex>() as u32,
+                rate: VertexInputRate::Vertex,
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 0,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgba32Sfloat,
+                    offset: 0,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 1,
+                binding: 0,
+                element: Element {
+                    format: Format::Rg32Sfloat,
+                    offset: 16,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 2,
+                binding: 0,
+                element: Element {
+                    format: Format::Rgb32Sfloat,
+                    offset: 24,
+                },
+            });
+
+            pipeline_desc.attributes.push(AttributeDesc {
+                location: 3,
+                binding: 0,
+                element: Element {
+                    format: Format::Rg32Sfloat,
+                    offset: 36,
                 },
             });
 
@@ -902,7 +1022,7 @@ impl JamBrushSystem {
         let mut desc_pool = unsafe {
             device
                 .create_descriptor_pool(
-                    2,
+                    3,
                     &[
                         DescriptorRangeDesc {
                             ty: DescriptorType::Image {
@@ -955,37 +1075,37 @@ impl JamBrushSystem {
                         offset: [-1., -1., 0.],
                         uv: [0., 1. - QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                     Vertex {
                         offset: [-1., 1., 0.],
                         uv: [0., QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                     Vertex {
                         offset: [1., -1., 0.],
                         uv: [1., 1. - QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                     Vertex {
                         offset: [-1., 1., 0.],
                         uv: [0., QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                     Vertex {
                         offset: [1., 1., 0.],
                         uv: [1., QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                     Vertex {
                         offset: [1., -1., 0.],
                         uv: [1., 1. - QY],
                         tint: WHITE,
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: [0.; 2],
                     },
                 ],
             )
@@ -1086,7 +1206,7 @@ impl JamBrushSystem {
                 &memory_types,
                 atlas_size,
                 atlas_size, // TODO: Probably too big
-                Format::R16Sfloat,
+                Format::R16Unorm,
                 img::Usage::TRANSFER_DST | img::Usage::SAMPLED,
                 Aspects::COLOR,
             );
@@ -1168,6 +1288,7 @@ impl JamBrushSystem {
                 set_layout,
                 pipeline_layout,
                 rtt_opaque_pipeline,
+                rtt_depthmapped_pipeline,
                 rtt_trans_pipeline,
                 blit_pipeline,
                 desc_pool,
@@ -1364,7 +1485,7 @@ impl JamBrushSystem {
                 .expect("Failed to create depth image from values")
         });
 
-        self.cpu_cache.sprite_textures.push((sprite_img, depth_img)); // TODO: push (color_image, OOption<depth_image>) and upload to matching locations in depth atlas
+        self.cpu_cache.sprite_textures.push((sprite_img, depth_img));
 
         self.sprite_atlas_outdated = true;
 
@@ -1453,7 +1574,9 @@ impl JamBrushSystem {
         self.load_sprite_with_depth(&image_bytes, &depth_image_bytes)
     }
 
+    // TODO: Allow reloading depth sprite too
     pub fn reload_sprite_rgba(&mut self, sprite: &Sprite, size: [u32; 2], rgba_bytes: &[u8]) {
+        // TODO: Assert same size
         let [w, h] = sprite.size;
         let [w, h] = [w as u32, h as u32];
 
@@ -1697,8 +1820,8 @@ impl JamBrushSystem {
                     .map_memory(&screenshot_memory, Segment::ALL)
                     .expect("TODO");
 
-                let image_bytes =
-                    Vec::from_raw_parts(mapped_memory, memory_size as usize, memory_size as usize);
+                let image_bytes = std::slice::from_raw_parts(mapped_memory, memory_size as usize);
+                let image_bytes = image_bytes.to_vec();
                 gpu.device.unmap_memory(&screenshot_memory);
 
                 image_bytes
@@ -1794,7 +1917,6 @@ impl<'a> Renderer<'a> {
         border_clear_color: [f32; 4],
     ) -> Self {
         unsafe {
-            // TODO: See next TODO
             draw_system.update_swapchain();
 
             let gpu = draw_system.gpu.as_mut().unwrap();
@@ -1967,7 +2089,7 @@ impl<'a> Renderer<'a> {
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
         let tint = srgb_to_linear(args.tint);
-        let transparent = sprite.transparent || tint[3] < 1.;
+        let transparent = args.depth_map.is_none() && (sprite.transparent || tint[3] < 1.);
 
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
@@ -1977,6 +2099,21 @@ impl<'a> Renderer<'a> {
         let [pos_x, pos_y] = args.pos;
         let [cam_x, cam_y] = self.camera;
 
+        // TODO: Calculate & store depth offset/scale & flag for whether it's depthy
+        // Say max depth is 100. I draw a sprite with depth 10.
+        // But then I also ask to draw with a depth_map, offset 10, and scale 10
+        // This means black pixels should be 10 + 10 + 0
+        // And white pixels should be 10 + 10 + 10
+        // More generally, depth = (sprite.depth + offset) + texture(..) * scale
+        // We should otherwise IGNORE the vertex `z` coordinate, just set depth
+        // with the above info
+        let depth_scale_add = match &args.depth_map {
+            Some(dargs) => [
+                dargs.depth_scale.unwrap_or(MAX_DEPTH) / MAX_DEPTH,
+                (args.depth + dargs.depth_offset) / MAX_DEPTH,
+            ],
+            None => [0.; 2],
+        };
         let data = SpriteData {
             transform: make_transform(
                 [pos_x - cam_x, pos_y - cam_y],
@@ -1986,6 +2123,8 @@ impl<'a> Renderer<'a> {
             tint,
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
+            depth_scale_add,
+            depth_mapped: args.depth_map.is_some(),
         };
 
         self.sprites.push(((transparent, args.depth), data));
@@ -2284,6 +2423,8 @@ impl<'a> Renderer<'a> {
                         tint,
                         uv_origin: [u, 0.5 + v / 2.],
                         uv_scale: [uw, vh / 2.],
+                        depth_scale_add: [0.; 2],
+                        depth_mapped: false,
                     }
                 };
 
@@ -2330,13 +2471,13 @@ impl<'a> Renderer<'a> {
                     let sy = sprite.transform[1][1];
                     let ox = sprite.transform[3][0];
                     let oy = sprite.transform[3][1];
-                    let z = *depth / MAX_DEPTH;
+                    let z = 1. - (*depth / MAX_DEPTH);
 
                     sprite_data.push(Vertex {
                         offset: [ox + sx * x, oy + sy * y, z],
                         tint: sprite.tint,
                         uv: [ou + su * u, ov + sv * v],
-                        depth_uv_scale_add: [0.; 4],
+                        depth_scale_add: sprite.depth_scale_add,
                     });
                 }
             }
@@ -2394,12 +2535,39 @@ impl<'a> Renderer<'a> {
                     &[],
                 );
 
-                command_buffer.bind_graphics_pipeline(&gpu.rtt_opaque_pipeline);
+                // Draw opaque objects
+                let trans_start_sprite_index =
+                    first_transparent_sprite_index.unwrap_or(self.sprites.len());
+                let trans_start_index = trans_start_sprite_index as u32 * 6;
 
-                let trans_start_index =
-                    first_transparent_sprite_index.unwrap_or(self.sprites.len()) as u32 * 6;
-                command_buffer.draw(0..trans_start_index, 0..1);
+                let mut depth_mapped = self
+                    .sprites
+                    .first()
+                    .map(|sprite| sprite.1.depth_mapped)
+                    .unwrap_or(false);
+                let mut start_index = 0;
 
+                // Draw runs of opaque or depthmapped objects
+                while start_index < trans_start_sprite_index {
+                    let end_of_run = self.sprites[start_index..trans_start_sprite_index]
+                        .iter()
+                        .position(|sprite| sprite.1.depth_mapped != depth_mapped)
+                        .unwrap_or(trans_start_sprite_index);
+                    let pipeline = if depth_mapped {
+                        &gpu.rtt_depthmapped_pipeline
+                    } else {
+                        &gpu.rtt_opaque_pipeline
+                    };
+                    let start_vertex = start_index as u32 * 6;
+                    let end_vertex = end_of_run as u32 * 6;
+                    command_buffer.bind_graphics_pipeline(pipeline);
+                    command_buffer.draw(start_vertex..end_vertex, 0..1);
+
+                    start_index = end_of_run;
+                    depth_mapped = !depth_mapped;
+                }
+
+                // Draw transparent objects
                 if first_transparent_sprite_index.is_some() {
                     command_buffer.bind_graphics_pipeline(&gpu.rtt_trans_pipeline);
 
@@ -2479,12 +2647,19 @@ impl<'a> Drop for Renderer<'a> {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct DepthMapArgs {
+    pub depth_offset: f32,
+    pub depth_scale: Option<f32>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpriteArgs {
     pub pos: [f32; 2],
     pub depth: f32,
     pub size: Option<[f32; 2]>,
     pub tint: [f32; 4],
+    pub depth_map: Option<DepthMapArgs>,
 }
 
 impl Default for SpriteArgs {
@@ -2494,6 +2669,7 @@ impl Default for SpriteArgs {
             size: None,
             depth: 0.,
             tint: WHITE,
+            depth_map: None,
         }
     }
 }
