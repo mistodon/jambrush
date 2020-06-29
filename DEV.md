@@ -1,6 +1,14 @@
 Next
 ===
 
+- OpenGL depth:
+    - Add a way to screencap the depth buffer (in any example)
+    - Try to use this to debug and fix depth_sorting and depth_mapping examples
+        - It seems like the depth buffer is not being correctly cleared...
+    - Once it all works, set up depth differently when opengl feature is enabled
+        - Different depth atlas format (Uint), different shader, etc.
+    - Make UX better for drawing sprites with depth
+
 - [ ] Take pos/cursor out of *Args struct (Why? I forget... Because it's always required?)
 - [ ] Find a non-working pixel font and see if we can fix it by clamping each glyph's position
 - [ ] Fix clipping rect when shrinking window below half size on Metal

@@ -177,6 +177,7 @@ pub enum Capture {
     TextureAtlas,
     DepthTextureAtlas,
     Canvas,
+    DepthBuffer,
     // TODO: Window,
 }
 
@@ -527,7 +528,7 @@ impl JamBrushSystem {
                 .find(|format| format.base_format().1 == ChannelType::Srgb)
                 .unwrap_or(default_format)
         };
-        let surface_depth_format = Format::D32SfloatS8Uint;
+        let surface_depth_format = Format::D32Sfloat;
 
         let rtt_render_pass = unsafe {
             let color_attachment = Attachment {
@@ -1206,7 +1207,7 @@ impl JamBrushSystem {
                 &memory_types,
                 atlas_size,
                 atlas_size, // TODO: Probably too big
-                Format::R16Unorm,
+                Format::R16Uint,
                 img::Usage::TRANSFER_DST | img::Usage::SAMPLED,
                 Aspects::COLOR,
             );
@@ -1750,17 +1751,30 @@ impl JamBrushSystem {
                 Capture::Canvas => &gpu.rtt_image, // TODO: Clear up image/texture confusion
                 Capture::TextureAtlas => &gpu.atlas_texture,
                 Capture::DepthTextureAtlas => &gpu.depth_atlas_texture,
+                Capture::DepthBuffer => &gpu.depth_image,
             };
 
-            let footprint = gpu.device.get_image_subresource_footprint(
-                image,
-                Subresource {
-                    aspects: Aspects::COLOR,
-                    level: 0,
-                    layer: 0,
-                },
-            );
-            let memory_size = footprint.slice.end - footprint.slice.start;
+            let bytes_per_pixel = match capture_type {
+                Capture::DepthTextureAtlas => 2,
+                _ => 4,
+            };
+
+            let (memory_size, width, height) = {
+                let footprint = gpu.device.get_image_subresource_footprint(
+                    image,
+                    Subresource {
+                        aspects: Aspects::COLOR,
+                        level: 0,
+                        layer: 0,
+                    },
+                );
+                (
+                    footprint.slice.end - footprint.slice.start,
+                    footprint.row_pitch as u32 / bytes_per_pixel,
+                    memory_size as u32 / footprint.row_pitch as u32,
+                )
+            };
+
             let memory_types = gpu.adapter.physical_device.memory_properties().memory_types;
 
             // TODO: Are these deleted?
@@ -1771,13 +1785,6 @@ impl JamBrushSystem {
                 buffer::Usage::TRANSFER_DST,
                 memory_size as usize,
             );
-
-            let bytes_per_pixel = match capture_type {
-                Capture::DepthTextureAtlas => 2,
-                _ => 4,
-            };
-            let width = footprint.row_pitch as u32 / bytes_per_pixel;
-            let height = memory_size as u32 / footprint.row_pitch as u32;
 
             let submit = {
                 let mut cmd_buffer = gpu.command_pool.allocate_one(Level::Primary);
@@ -1836,8 +1843,20 @@ impl JamBrushSystem {
 
         let (size, image_bytes) = self.capture_image(capture_type);
         let color_type = match capture_type {
-            Capture::DepthTextureAtlas => ColorType::L16,
+            Capture::DepthTextureAtlas | Capture::DepthBuffer => ColorType::L16,
             _ => ColorType::Rgba8,
+        };
+        let image_bytes = match capture_type {
+            // Crunch float depth down to u16s
+            Capture::DepthBuffer => {
+                let shorts = image_bytes.chunks(4).map(|bytes| {
+                    let depth = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (depth * 65535.0) as u16
+                }).collect::<Vec<_>>();
+                let byte_slice = unsafe { std::slice::from_raw_parts(shorts.as_ptr() as *const u8, shorts.len() * 2) };
+                byte_slice.to_vec()
+            }
+            _ => image_bytes,
         };
         image::save_buffer(path, &image_bytes, size[0], size[1], color_type).unwrap();
     }
