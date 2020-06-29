@@ -67,6 +67,8 @@ fn main() {
                             jambrush.capture_to_file(jambrush::Capture::TextureAtlas, "capturing_texture_atlas.png");
                         } else if let Some(VirtualKeyCode::Key3) = input.virtual_keycode {
                             jambrush.capture_to_file(jambrush::Capture::DepthTextureAtlas, "capturing_depth_texture_atlas.png");
+                        } else if let Some(VirtualKeyCode::Key4) = input.virtual_keycode {
+                            jambrush.capture_to_file(jambrush::Capture::DepthBuffer, "capturing_depth_buffer.png");
                         }
                     }
                 }
@@ -82,11 +84,15 @@ fn main() {
                 renderer.text(
                     &inconsolata,
                     16.,
-                    "Press:\n[1] Screenshot\n[2] Texture atlas\n[3] Depth texture atlas",
+                    "Press:\n[1] Screenshot\n[2] Texture atlas\n[3] Depth texture atlas\n[4] Depth buffer",
                     [0., 0.],
                 );
                 renderer.sprite(&cube_sprite, [0., 60.]);
-                renderer.sprite(&ball_sprite, [96., 60.]);
+                renderer.sprite(&ball_sprite, jambrush::SpriteArgs {
+                    pos: [96., 60.],
+                    depth_map: Some(Default::default()),
+                    .. Default::default()
+                });
                 renderer.finish();
             }
             _ => {}
