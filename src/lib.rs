@@ -1768,8 +1768,9 @@ impl JamBrushSystem {
                         layer: 0,
                     },
                 );
+                let memory_size = footprint.slice.end - footprint.slice.start;
                 (
-                    footprint.slice.end - footprint.slice.start,
+                    memory_size,
                     footprint.row_pitch as u32 / bytes_per_pixel,
                     memory_size as u32 / footprint.row_pitch as u32,
                 )
