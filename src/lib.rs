@@ -1207,7 +1207,7 @@ impl JamBrushSystem {
                 &memory_types,
                 atlas_size,
                 atlas_size, // TODO: Probably too big
-                Format::R16Uint,
+                Format::R16Uint, // Format::R16Unorm when not OpenGL
                 img::Usage::TRANSFER_DST | img::Usage::SAMPLED,
                 Aspects::COLOR,
             );
