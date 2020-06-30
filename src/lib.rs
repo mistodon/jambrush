@@ -532,7 +532,7 @@ impl JamBrushSystem {
 
         let rtt_render_pass = unsafe {
             let color_attachment = Attachment {
-                format: Some(Format::Rgba8Srgb),
+                format: Some(surface_color_format),
                 samples: 1,
                 ops: AttachmentOps::new(AttachmentLoadOp::Clear, AttachmentStoreOp::Store),
                 stencil_ops: AttachmentOps::DONT_CARE,
@@ -647,10 +647,22 @@ impl JamBrushSystem {
         };
 
         let depth_fragment_shader_module = unsafe {
-            let spirv = include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/compiled/depth_sprite.frag.spv"
-            ));
+            let spirv = {
+                #[cfg(not(feature = "opengl"))]
+                {
+                    include_bytes!(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/assets/compiled/depth_sprite.frag.spv"
+                    ))
+                }
+                #[cfg(feature = "opengl")]
+                {
+                    include_bytes!(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/assets/compiled/depth_sprite_gl.frag.spv"
+                    ))
+                }
+            };
             let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
                 .expect("Invalid SPIR-V");
             device.create_shader_module(&spirv).unwrap()
@@ -1142,7 +1154,7 @@ impl JamBrushSystem {
                 &memory_types,
                 image_extent.width,
                 image_extent.height,
-                Format::Rgba8Srgb,
+                surface_color_format,
                 img::Usage::SAMPLED,
                 Aspects::COLOR,
             );
@@ -1201,13 +1213,23 @@ impl JamBrushSystem {
             (texture_image, texture_memory, texture_view, texture_sampler)
         };
 
+        let depth_atlas_format = {
+            #[cfg(not(feature = "opengl"))]
+            {
+                Format::R16Unorm
+            }
+            #[cfg(feature = "opengl")]
+            {
+                Format::R16Uint
+            }
+        };
         let (depth_atlas_texture, depth_atlas_memory, depth_atlas_view, depth_atlas_sampler) = unsafe {
             let (texture_image, texture_memory, texture_view) = utils::create_image(
                 &device,
                 &memory_types,
                 atlas_size,
                 atlas_size, // TODO: Probably too big
-                Format::R16Uint, // Format::R16Unorm when not OpenGL
+                depth_atlas_format,
                 img::Usage::TRANSFER_DST | img::Usage::SAMPLED,
                 Aspects::COLOR,
             );
