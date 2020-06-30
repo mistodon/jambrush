@@ -103,7 +103,7 @@ fn main() {
                         VirtualKeyCode::D => player[0] += speed,
                         VirtualKeyCode::W => player[1] -= speed,
                         VirtualKeyCode::S => player[1] += speed,
-                        _ => ()
+                        _ => (),
                     }
                 }
                 jambrush.window().request_redraw();
@@ -112,10 +112,13 @@ fn main() {
                 let mut renderer =
                     jambrush.start_rendering([0., 0., 0., 1.], Some([0.1, 0.1, 0.1, 1.]));
 
-                renderer.sprite(&extruded_sprite, jambrush::SpriteArgs {
-                    depth_map: Some(Default::default()),
-                    .. Default::default()
-                });
+                renderer.sprite(
+                    &extruded_sprite,
+                    jambrush::SpriteArgs {
+                        depth_mapped: true,
+                        ..Default::default()
+                    },
+                );
                 renderer.sprite(&player_sprite, (player, player[1] + 16.));
 
                 renderer.finish();

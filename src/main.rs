@@ -62,7 +62,6 @@ fn main() {
                 let mut stdout = std::io::stdout();
                 stdout.write_all(&color).unwrap();
             }
-
         }
     }
 }
