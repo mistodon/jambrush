@@ -39,4 +39,4 @@ features = ["gpu_cache"]
 version = "~0.7.2"
 
 [build-dependencies]
-glsl-to-spirv = "=0.1.7"
+shaderc = "=0.6.2"
