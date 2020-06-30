@@ -90,7 +90,7 @@ fn main() {
                 renderer.sprite(&cube_sprite, [0., 60.]);
                 renderer.sprite(&ball_sprite, jambrush::SpriteArgs {
                     pos: [96., 60.],
-                    depth_map: Some(Default::default()),
+                    depth_mapped: true,
                     .. Default::default()
                 });
                 renderer.finish();

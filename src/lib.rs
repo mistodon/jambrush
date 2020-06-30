@@ -1872,11 +1872,16 @@ impl JamBrushSystem {
         let image_bytes = match capture_type {
             // Crunch float depth down to u16s
             Capture::DepthBuffer => {
-                let shorts = image_bytes.chunks(4).map(|bytes| {
-                    let depth = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    (depth * 65535.0) as u16
-                }).collect::<Vec<_>>();
-                let byte_slice = unsafe { std::slice::from_raw_parts(shorts.as_ptr() as *const u8, shorts.len() * 2) };
+                let shorts = image_bytes
+                    .chunks(4)
+                    .map(|bytes| {
+                        let depth = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        (depth * 65535.0) as u16
+                    })
+                    .collect::<Vec<_>>();
+                let byte_slice = unsafe {
+                    std::slice::from_raw_parts(shorts.as_ptr() as *const u8, shorts.len() * 2)
+                };
                 byte_slice.to_vec()
             }
             _ => image_bytes,
@@ -2131,7 +2136,7 @@ impl<'a> Renderer<'a> {
 
         let scale = args.size.unwrap_or([px * sx, py * sy]);
         let tint = srgb_to_linear(args.tint);
-        let transparent = args.depth_map.is_none() && (sprite.transparent || tint[3] < 1.);
+        let transparent = !args.depth_mapped && (sprite.transparent || tint[3] < 1.);
 
         let uw = uv_scale[0] * sx;
         let uh = uv_scale[1] * sy;
@@ -2141,20 +2146,12 @@ impl<'a> Renderer<'a> {
         let [pos_x, pos_y] = args.pos;
         let [cam_x, cam_y] = self.camera;
 
-        // TODO: Calculate & store depth offset/scale & flag for whether it's depthy
-        // Say max depth is 100. I draw a sprite with depth 10.
-        // But then I also ask to draw with a depth_map, offset 10, and scale 10
-        // This means black pixels should be 10 + 10 + 0
-        // And white pixels should be 10 + 10 + 10
-        // More generally, depth = (sprite.depth + offset) + texture(..) * scale
-        // We should otherwise IGNORE the vertex `z` coordinate, just set depth
-        // with the above info
-        let depth_scale_add = match &args.depth_map {
-            Some(dargs) => [
-                dargs.depth_scale.unwrap_or(MAX_DEPTH) / MAX_DEPTH,
-                (args.depth + dargs.depth_offset) / MAX_DEPTH,
+        let depth_scale_add = match args.depth_mapped {
+            true => [
+                args.depth_scale.unwrap_or(MAX_DEPTH) / MAX_DEPTH,
+                (args.depth + args.depth_offset) / MAX_DEPTH,
             ],
-            None => [0.; 2],
+            false => [0.; 2],
         };
         let data = SpriteData {
             transform: make_transform(
@@ -2166,7 +2163,7 @@ impl<'a> Renderer<'a> {
             uv_origin: [u0, v0],
             uv_scale: [uw, uh],
             depth_scale_add,
-            depth_mapped: args.depth_map.is_some(),
+            depth_mapped: args.depth_mapped,
         };
 
         self.sprites.push(((transparent, args.depth), data));
@@ -2696,19 +2693,15 @@ impl<'a> Drop for Renderer<'a> {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct DepthMapArgs {
-    pub depth_offset: f32,
-    pub depth_scale: Option<f32>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpriteArgs {
     pub pos: [f32; 2],
     pub depth: f32,
     pub size: Option<[f32; 2]>,
     pub tint: [f32; 4],
-    pub depth_map: Option<DepthMapArgs>,
+    pub depth_mapped: bool,
+    pub depth_offset: f32,
+    pub depth_scale: Option<f32>,
 }
 
 impl Default for SpriteArgs {
@@ -2718,7 +2711,9 @@ impl Default for SpriteArgs {
             size: None,
             depth: 0.,
             tint: WHITE,
-            depth_map: None,
+            depth_mapped: false,
+            depth_offset: 0.0,
+            depth_scale: None,
         }
     }
 }

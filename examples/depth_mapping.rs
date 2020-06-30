@@ -1,9 +1,5 @@
 fn main() {
-    use winit::{
-        dpi::LogicalSize,
-        event_loop::EventLoop,
-        window::WindowBuilder,
-    };
+    use winit::{dpi::LogicalSize, event_loop::EventLoop, window::WindowBuilder};
 
     let event_loop = EventLoop::new();
     let window_builder = WindowBuilder::new()
@@ -30,9 +26,10 @@ fn main() {
         jambrush.load_font_file(path)
     };
 
-    let white_sprite = jambrush.load_sprite_file(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/white.png"),
-    );
+    let white_sprite = jambrush.load_sprite_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/examples/white.png"
+    ));
     let cube_sprite = jambrush.load_sprite_file_with_depth(
         concat!(env!("CARGO_MANIFEST_DIR"), "/assets/examples/cube.png"),
         concat!(
@@ -85,10 +82,9 @@ fn main() {
                     &cube_sprite,
                     jambrush::SpriteArgs {
                         pos: [32., 48.],
-                        depth_map: Some(jambrush::DepthMapArgs {
-                            depth_offset: 16000.,
-                            depth_scale: Some(32000.),
-                        }),
+                        depth_mapped: true,
+                        depth_offset: 16000.,
+                        depth_scale: Some(32000.),
                         ..Default::default()
                     },
                 );
@@ -96,7 +92,7 @@ fn main() {
                     &ball_sprite,
                     jambrush::SpriteArgs {
                         pos: [128., 48.],
-                        depth_map: Some(Default::default()),
+                        depth_mapped: true,
                         ..Default::default()
                     },
                 );

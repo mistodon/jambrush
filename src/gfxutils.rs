@@ -195,7 +195,9 @@ pub mod utils {
         src_depth: Option<&DepthImage>,
         dst_image: &TImage,
     ) {
-        let (width, height) = src_image.map(|img| img.dimensions()).unwrap_or_else(|| src_depth.unwrap().dimensions());
+        let (width, height) = src_image
+            .map(|img| img.dimensions())
+            .unwrap_or_else(|| src_depth.unwrap().dimensions());
         let image_stride = src_image.map(|_| 4_usize).unwrap_or(2_usize);
 
         let memory_types = physical_device.memory_properties().memory_types;
