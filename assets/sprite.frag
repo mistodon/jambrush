@@ -10,5 +10,6 @@ layout(set = 0, binding = 0) uniform texture2D color_map;
 layout(set = 0, binding = 1) uniform sampler color_sampler;
 
 void main() {
-    target = vcolor * texture(sampler2D(color_map, color_sampler), vuv);
+    vec4 tex = vcolor * texture(sampler2D(color_map, color_sampler), vuv);
+    target = tex;
 }
