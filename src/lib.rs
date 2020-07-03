@@ -75,6 +75,8 @@ struct SpriteData {
     pub uv_scale: [f32; 2],
     pub depth_scale_add: [f32; 2],
     pub depth_mapped: bool,
+    pub top_z_hack: Option<f32>,
+    pub debugging: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1889,6 +1891,26 @@ impl JamBrushSystem {
         image::save_buffer(path, &image_bytes, size[0], size[1], color_type).unwrap();
     }
 
+    pub fn capture_vertices_to_file<P: AsRef<Path>>(&mut self, path: P) {
+        use std::fmt::Write;
+
+        let sprite_data = &self.cpu_cache.sprite_vertex_data;
+        let mut buffer = String::with_capacity(sprite_data.len() * 280);
+        writeln!(&mut buffer, "mtllib model.mtl").unwrap();
+        writeln!(&mut buffer, "usemtl main").unwrap();
+        for (i, vertices) in sprite_data.chunks(3).enumerate() {
+            for vertex in vertices {
+                let [x, y, z] = vertex.offset;
+                let [u, v] = vertex.uv;
+                writeln!(&mut buffer, "v {} {} {}", x, y, ((1. - z) * MAX_DEPTH) / 1000.).unwrap();
+                writeln!(&mut buffer, "vt {} {}", u, v).unwrap();
+                let f = i * 3 + 1;
+                writeln!(&mut buffer, "f {}/{} {}/{} {}/{}", f, f, f+1, f+1, f+2, f+2).unwrap();
+            }
+        }
+        std::fs::write(&path, buffer).unwrap();
+    }
+
     pub fn recording(&mut self) -> bool {
         self.recording.is_some()
     }
@@ -2164,6 +2186,8 @@ impl<'a> Renderer<'a> {
             uv_scale: [uw, uh],
             depth_scale_add,
             depth_mapped: args.depth_mapped,
+            top_z_hack: args.top_z_hack,
+            debugging: args.debugging,
         };
 
         self.sprites.push(((transparent, args.depth), data));
@@ -2464,6 +2488,8 @@ impl<'a> Renderer<'a> {
                         uv_scale: [uw, vh / 2.],
                         depth_scale_add: [0.; 2],
                         depth_mapped: false,
+                        top_z_hack: None,
+                        debugging: false,
                     }
                 };
 
@@ -2502,6 +2528,9 @@ impl<'a> Renderer<'a> {
                 ];
 
                 // TODO: Don't even have an intermediary matrix
+                let z = 1. - (*depth / MAX_DEPTH);
+                let top_z = sprite.top_z_hack.map(|depth| 1. - (depth / MAX_DEPTH)).unwrap_or(z);
+
                 for &([x, y], [u, v]) in BASE_VERTICES {
                     let [ou, ov] = sprite.uv_origin;
                     let [su, sv] = sprite.uv_scale;
@@ -2510,7 +2539,7 @@ impl<'a> Renderer<'a> {
                     let sy = sprite.transform[1][1];
                     let ox = sprite.transform[3][0];
                     let oy = sprite.transform[3][1];
-                    let z = 1. - (*depth / MAX_DEPTH);
+                    let z = y * z + (1. - y) * top_z;
 
                     sprite_data.push(Vertex {
                         offset: [ox + sx * x, oy + sy * y, z],
@@ -2702,6 +2731,8 @@ pub struct SpriteArgs {
     pub depth_mapped: bool,
     pub depth_offset: f32,
     pub depth_scale: Option<f32>,
+    pub top_z_hack: Option<f32>,
+    pub debugging: bool,
 }
 
 impl Default for SpriteArgs {
@@ -2714,6 +2745,8 @@ impl Default for SpriteArgs {
             depth_mapped: false,
             depth_offset: 0.0,
             depth_scale: None,
+            top_z_hack: None,
+            debugging: false,
         }
     }
 }
