@@ -8,11 +8,13 @@ edition = "2018"
 default = []
 opengl = ["gfx-backend-gl"]
 dx11 = ["gfx-backend-dx11"]
+cli = ["structopt", "shaderc"]
 
 [dependencies]
 gfx-hal = "=0.5.0"
 image = "~0.23.2"
-structopt = "~0.3.15"
+shaderc = { version="=0.6.2", optional = true }
+structopt = { version="~0.3.15", optional = true }
 texture_packer = "~0.21.0"
 winit = "=0.21.0"
 
@@ -37,6 +39,3 @@ version = "=0.5.0"
 [dependencies.rusttype]
 features = ["gpu_cache"]
 version = "~0.7.2"
-
-[build-dependencies]
-shaderc = "=0.6.2"
