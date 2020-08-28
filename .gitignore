@@ -1,5 +1,4 @@
 /target
 **/*.rs.bk
-/assets/compiled
 Cargo.lock
 capturing_*.png
