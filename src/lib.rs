@@ -1867,11 +1867,15 @@ impl JamBrushSystem {
         use image::ColorType;
 
         let (size, image_bytes) = self.capture_image(capture_type);
+        let swizzle = match capture_type {
+            Capture::Canvas => true,
+            _ => false,
+        };
         let color_type = match capture_type {
             Capture::DepthTextureAtlas | Capture::DepthBuffer => ColorType::L16,
             _ => ColorType::Rgba8,
         };
-        let image_bytes = match capture_type {
+        let mut image_bytes = match capture_type {
             // Crunch float depth down to u16s
             Capture::DepthBuffer => {
                 let shorts = image_bytes
@@ -1888,6 +1892,12 @@ impl JamBrushSystem {
             }
             _ => image_bytes,
         };
+        if swizzle {
+            for chunk in image_bytes.chunks_mut(4) {
+                let (r, rest) = chunk.split_first_mut().unwrap();
+                std::mem::swap(r, &mut rest[1]);
+            }
+        }
         image::save_buffer(path, &image_bytes, size[0], size[1], color_type).unwrap();
     }
 
