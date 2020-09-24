@@ -216,7 +216,7 @@ struct GpuResources {
     #[cfg(not(feature = "opengl"))]
     _instance: backend::Instance,
 
-    surface: backend::Surface,
+    surface: TSurface,
     surface_color_format: Format,
     adapter: Adapter<backend::Backend>,
     device: TDevice,
