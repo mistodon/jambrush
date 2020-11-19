@@ -38,7 +38,9 @@ fn main() {
     let extruded_sprite = {
         type DepthImage = image::ImageBuffer<image::Luma<u16>, Vec<u16>>;
 
-        let height_map = image::load_from_memory(height_map_bytes).unwrap().to_rgba();
+        let height_map = image::load_from_memory(height_map_bytes)
+            .unwrap()
+            .to_rgba8();
         let (w, h) = height_map.dimensions();
 
         let mut color_map = image::RgbaImage::new(w, h);

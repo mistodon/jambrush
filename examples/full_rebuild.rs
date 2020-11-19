@@ -44,7 +44,7 @@ fn main() {
                 if (scale != target_scale) || context.is_none() {
                     scale = target_scale;
 
-                    context = None;
+                    context.take();
 
                     let window_builder = WindowBuilder::new()
                         .with_title("JamBrush - Full Recreate")

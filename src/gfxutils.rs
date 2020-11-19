@@ -20,10 +20,10 @@ pub use gfx_hal::{
     pso::{
         AttributeDesc, BlendState, ColorBlendDesc, ColorMask, Comparison, DepthStencilDesc,
         DepthTest, Descriptor, DescriptorPool, DescriptorPoolCreateFlags, DescriptorRangeDesc,
-        DescriptorSetLayoutBinding, DescriptorSetWrite, DescriptorType, Element, EntryPoint,
-        GraphicsPipelineDesc, GraphicsShaderSet, ImageDescriptorType, PipelineStage, Primitive,
-        Rasterizer, Rect, ShaderStageFlags, StencilTest, VertexBufferDesc, VertexInputRate,
-        Viewport,
+        DescriptorSetLayoutBinding, DescriptorSetWrite, DescriptorType, Element, EntryPoint, Face,
+        GraphicsPipelineDesc, ImageDescriptorType, InputAssemblerDesc, PipelineStage, Primitive,
+        PrimitiveAssemblerDesc, Rasterizer, Rect, ShaderStageFlags, StencilTest, VertexBufferDesc,
+        VertexInputRate, Viewport,
     },
     queue::{family::QueueGroup, CommandQueue, Submission},
     window::{Extent2D, PresentationSurface, Surface, SwapchainConfig},
@@ -176,8 +176,10 @@ pub mod utils {
                 Swizzle::NO,
                 img::SubresourceRange {
                     aspects,
-                    levels: 0..1,
-                    layers: 0..1,
+                    level_start: 0,
+                    level_count: None,
+                    layer_start: 0,
+                    layer_count: None,
                 },
             )
             .expect("Failed to create image view");
@@ -266,8 +268,10 @@ pub mod utils {
                 families: None,
                 range: SubresourceRange {
                     aspects: Aspects::COLOR,
-                    levels: 0..1,
-                    layers: 0..1,
+                    level_start: 0,
+                    level_count: None,
+                    layer_start: 0,
+                    layer_count: None,
                 },
             };
 
@@ -306,8 +310,10 @@ pub mod utils {
                 families: None,
                 range: SubresourceRange {
                     aspects: Aspects::COLOR,
-                    levels: 0..1,
-                    layers: 0..1,
+                    level_start: 0,
+                    level_count: None,
+                    layer_start: 0,
+                    layer_count: None,
                 },
             };
 

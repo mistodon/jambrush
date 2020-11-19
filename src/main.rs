@@ -2,12 +2,10 @@ use std::path::PathBuf;
 
 use image::{DynamicImage, RgbaImage};
 
-#[cfg(feature = "cli")]
 use structopt::StructOpt;
 
 type DepthImage = image::ImageBuffer<image::Luma<u16>, Vec<u16>>;
 
-#[cfg(feature = "cli")]
 #[derive(Debug, StructOpt)]
 enum Command {
     Shaders,
@@ -25,18 +23,12 @@ enum Command {
     },
 }
 
-#[cfg(not(feature = "cli"))]
-fn main() {
-    panic!("Not compiled with CLI support!");
-}
-
-#[cfg(feature = "cli")]
 fn main() {
     let opt = Command::from_args();
     match opt {
         Command::ToDepth { in_file, out_file } => {
             let img_bytes = std::fs::read(in_file).unwrap();
-            let img = image::load_from_memory(&img_bytes).unwrap().to_rgba();
+            let img = image::load_from_memory(&img_bytes).unwrap().to_rgba8();
             let (w, h) = img.dimensions();
             let mut depth = DepthImage::new(w, h);
             for (x, y, px) in img.enumerate_pixels() {
@@ -79,7 +71,6 @@ fn main() {
     }
 }
 
-#[cfg(feature = "cli")]
 fn compile_shaders() -> Result<(), Box<dyn std::error::Error>> {
     let mut compiler = shaderc::Compiler::new().unwrap();
     let options = shaderc::CompileOptions::new().unwrap();

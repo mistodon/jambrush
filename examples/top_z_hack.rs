@@ -1,9 +1,5 @@
 fn main() {
-    use winit::{
-        dpi::LogicalSize,
-        event_loop::EventLoop,
-        window::WindowBuilder,
-    };
+    use winit::{dpi::LogicalSize, event_loop::EventLoop, window::WindowBuilder};
 
     let event_loop = EventLoop::new();
     let window_builder = WindowBuilder::new()
@@ -56,13 +52,16 @@ fn main() {
 
                 renderer.sprite(&opaque_sprite, ([32., 24.], d, [1., 0., 0., 1.]));
 
-                renderer.sprite(&opaque_sprite, jambrush::SpriteArgs {
-                    pos: [32., 24.],
-                    depth: 60000.,
-                    tint: [0.5, 0., 0., 1.],
-                    top_z_hack: Some(0.),
-                    .. Default::default()
-                });
+                renderer.sprite(
+                    &opaque_sprite,
+                    jambrush::SpriteArgs {
+                        pos: [32., 24.],
+                        depth: 60000.,
+                        tint: [0.5, 0., 0., 1.],
+                        top_z_hack: Some(0.),
+                        ..Default::default()
+                    },
+                );
 
                 renderer.finish();
             }

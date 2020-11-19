@@ -216,9 +216,7 @@ struct CpuSideCache {
 }
 
 struct GpuResources {
-    #[cfg(not(feature = "opengl"))]
     _instance: backend::Instance,
-
     surface: TSurface,
     surface_color_format: Format,
     adapter: Adapter<backend::Backend>,
@@ -442,7 +440,7 @@ impl JamBrushSystem {
             println!("Initializing window and render context");
         }
 
-        #[cfg(not(feature = "opengl"))]
+        // #[cfg(not(feature = "opengl"))]
         let (window, inner_size, dpi_factor, _instance, surface, adapter) = {
             let window = window_builder.build(event_loop).unwrap();
             let dpi_factor = window.scale_factor();
@@ -458,50 +456,50 @@ impl JamBrushSystem {
             (window, inner_size, dpi_factor, _instance, surface, adapter)
         };
 
-        #[cfg(feature = "opengl")]
-        let (window, inner_size, dpi_factor, adapter, surface) = {
-            #[cfg(not(target_arch = "wasm32"))]
-            let (window, surface) = {
-                let builder = backend::config_context(
-                    backend::glutin::ContextBuilder::new(),
-                    gfx_hal::format::Format::Rgba8Srgb,
-                    None,
-                )
-                .with_vsync(true);
+        // #[cfg(feature = "opengl")]
+        // let (window, inner_size, dpi_factor, adapter, surface) = {
+        //     #[cfg(not(target_arch = "wasm32"))]
+        //     let (window, surface) = {
+        //         let builder = backend::config_context(
+        //             backend::glutin::ContextBuilder::new(),
+        //             gfx_hal::format::Format::Rgba8Srgb,
+        //             None,
+        //         )
+        //         .with_vsync(true);
 
-                let windowed_context = builder.build_windowed(window_builder, &event_loop).unwrap();
+        //         let windowed_context = builder.build_windowed(window_builder, &event_loop).unwrap();
 
-                let (context, window) = unsafe {
-                    windowed_context
-                        .make_current()
-                        .expect("Unable to make context current")
-                        .split()
-                };
+        //         let (context, window) = unsafe {
+        //             windowed_context
+        //                 .make_current()
+        //                 .expect("Unable to make context current")
+        //                 .split()
+        //         };
 
-                let surface = backend::Surface::from_context(context);
+        //         let surface = backend::Surface::from_context(context);
 
-                (window, surface)
-            };
+        //         (window, surface)
+        //     };
 
-            #[cfg(target_arch = "wasm32")]
-            let (window, surface) = {
-                let window = window_builder.build(&event_loop).unwrap();
-                web_sys::window()
-                    .unwrap()
-                    .document()
-                    .unwrap()
-                    .body()
-                    .unwrap()
-                    .append_child(&winit::platform::web::WindowExtWebSys::canvas(&window));
-                let surface = back::Surface::from_raw_handle(&window);
-                (window, surface)
-            };
+        //     #[cfg(target_arch = "wasm32")]
+        //     let (window, surface) = {
+        //         let window = window_builder.build(&event_loop).unwrap();
+        //         web_sys::window()
+        //             .unwrap()
+        //             .document()
+        //             .unwrap()
+        //             .body()
+        //             .unwrap()
+        //             .append_child(&winit::platform::web::WindowExtWebSys::canvas(&window));
+        //         let surface = back::Surface::from_raw_handle(&window);
+        //         (window, surface)
+        //     };
 
-            let dpi_factor = window.scale_factor();
-            let inner_size: PhysicalSize<u32> = window.inner_size();
-            let adapter = surface.enumerate_adapters().remove(0);
-            (window, inner_size, dpi_factor, adapter, surface)
-        };
+        //     let dpi_factor = window.scale_factor();
+        //     let inner_size: PhysicalSize<u32> = window.inner_size();
+        //     let adapter = surface.enumerate_adapters().remove(0);
+        //     (window, inner_size, dpi_factor, adapter, surface)
+        // };
 
         let resolution = canvas_size.unwrap_or_else(|| {
             let logical_size: LogicalSize<u32> = inner_size.to_logical(dpi_factor);
@@ -636,14 +634,21 @@ impl JamBrushSystem {
                 .unwrap()
         };
 
+        fn read_spirv(bytes: &[u8]) -> &[u32] {
+            debug_assert!(bytes.len() % 4 == 0, "SPIRV not aligned");
+            unsafe {
+                let p = bytes.as_ptr() as *const u32;
+                std::slice::from_raw_parts(p, bytes.len() / 4)
+            }
+        }
+
         let vertex_shader_module = unsafe {
             let spirv = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.vert.spv"
             ));
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let fragment_shader_module = unsafe {
@@ -651,9 +656,8 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/sprite.frag.spv"
             ));
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let depth_vertex_shader_module = unsafe {
@@ -661,9 +665,8 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/depth_sprite.vert.spv"
             ));
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let depth_fragment_shader_module = unsafe {
@@ -683,9 +686,8 @@ impl JamBrushSystem {
                     ))
                 }
             };
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let blit_vertex_shader_module = unsafe {
@@ -693,9 +695,8 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/blit.vert.spv"
             ));
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let blit_fragment_shader_module = unsafe {
@@ -703,9 +704,8 @@ impl JamBrushSystem {
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/compiled/blit.frag.spv"
             ));
-            let spirv = gfx_hal::pso::read_spirv(std::io::Cursor::new(spirv.as_ref()))
-                .expect("Invalid SPIR-V");
-            device.create_shader_module(&spirv).unwrap()
+            let spirv = read_spirv(spirv);
+            device.create_shader_module(spirv).unwrap()
         };
 
         let rtt_opaque_pipeline = unsafe {
@@ -721,25 +721,59 @@ impl JamBrushSystem {
                 specialization: Default::default(),
             };
 
-            let shader_entries = GraphicsShaderSet {
-                vertex: vs_entry,
-                hull: None,
-                domain: None,
-                geometry: None,
-                fragment: Some(fs_entry),
-            };
+            let primitive_assembler = {
+                PrimitiveAssemblerDesc::Vertex {
+                    buffers: &[VertexBufferDesc {
+                        binding: 0,
+                        stride: std::mem::size_of::<Vertex>() as u32,
+                        rate: VertexInputRate::Vertex,
+                    }],
 
-            let subpass = Subpass {
-                index: 0,
-                main_pass: &rtt_render_pass,
+                    attributes: &[
+                        AttributeDesc {
+                            location: 0,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 0,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 1,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 16,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 2,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 24,
+                            },
+                        },
+                    ],
+                    input_assembler: InputAssemblerDesc::new(Primitive::TriangleList),
+                    vertex: vs_entry,
+                    tessellation: None,
+                    geometry: None,
+                }
             };
 
             let mut pipeline_desc = GraphicsPipelineDesc::new(
-                shader_entries,
-                Primitive::TriangleList,
-                Rasterizer::FILL,
+                primitive_assembler,
+                Rasterizer {
+                    cull_face: Face::BACK,
+                    ..Rasterizer::FILL
+                },
+                Some(fs_entry),
                 &pipeline_layout,
-                subpass,
+                Subpass {
+                    index: 0,
+                    main_pass: &rtt_render_pass,
+                },
             );
 
             pipeline_desc.blender.targets.push(ColorBlendDesc {
@@ -755,39 +789,6 @@ impl JamBrushSystem {
                 depth_bounds: false,
                 stencil: None,
             };
-
-            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
-                binding: 0,
-                stride: std::mem::size_of::<Vertex>() as u32,
-                rate: VertexInputRate::Vertex,
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 0,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgba32Sfloat,
-                    offset: 0,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 1,
-                binding: 0,
-                element: Element {
-                    format: Format::Rg32Sfloat,
-                    offset: 16,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 2,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgb32Sfloat,
-                    offset: 24,
-                },
-            });
 
             device
                 .create_graphics_pipeline(&pipeline_desc, None)
@@ -807,25 +808,67 @@ impl JamBrushSystem {
                 specialization: Default::default(),
             };
 
-            let shader_entries = GraphicsShaderSet {
-                vertex: vs_entry,
-                hull: None,
-                domain: None,
-                geometry: None,
-                fragment: Some(fs_entry),
-            };
+            let primitive_assembler = {
+                PrimitiveAssemblerDesc::Vertex {
+                    buffers: &[VertexBufferDesc {
+                        binding: 0,
+                        stride: std::mem::size_of::<Vertex>() as u32,
+                        rate: VertexInputRate::Vertex,
+                    }],
 
-            let subpass = Subpass {
-                index: 0,
-                main_pass: &rtt_render_pass,
+                    attributes: &[
+                        AttributeDesc {
+                            location: 0,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 0,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 1,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 16,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 2,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 24,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 3,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 36,
+                            },
+                        },
+                    ],
+                    input_assembler: InputAssemblerDesc::new(Primitive::TriangleList),
+                    vertex: vs_entry,
+                    tessellation: None,
+                    geometry: None,
+                }
             };
 
             let mut pipeline_desc = GraphicsPipelineDesc::new(
-                shader_entries,
-                Primitive::TriangleList,
-                Rasterizer::FILL,
+                primitive_assembler,
+                Rasterizer {
+                    cull_face: Face::BACK,
+                    ..Rasterizer::FILL
+                },
+                Some(fs_entry),
                 &pipeline_layout,
-                subpass,
+                Subpass {
+                    index: 0,
+                    main_pass: &rtt_render_pass,
+                },
             );
 
             pipeline_desc.blender.targets.push(ColorBlendDesc {
@@ -841,48 +884,6 @@ impl JamBrushSystem {
                 depth_bounds: false,
                 stencil: None,
             };
-
-            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
-                binding: 0,
-                stride: std::mem::size_of::<Vertex>() as u32,
-                rate: VertexInputRate::Vertex,
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 0,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgba32Sfloat,
-                    offset: 0,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 1,
-                binding: 0,
-                element: Element {
-                    format: Format::Rg32Sfloat,
-                    offset: 16,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 2,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgb32Sfloat,
-                    offset: 24,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 3,
-                binding: 0,
-                element: Element {
-                    format: Format::Rg32Sfloat,
-                    offset: 36,
-                },
-            });
 
             device
                 .create_graphics_pipeline(&pipeline_desc, None)
@@ -902,25 +903,59 @@ impl JamBrushSystem {
                 specialization: Default::default(),
             };
 
-            let shader_entries = GraphicsShaderSet {
-                vertex: vs_entry,
-                hull: None,
-                domain: None,
-                geometry: None,
-                fragment: Some(fs_entry),
-            };
+            let primitive_assembler = {
+                PrimitiveAssemblerDesc::Vertex {
+                    buffers: &[VertexBufferDesc {
+                        binding: 0,
+                        stride: std::mem::size_of::<Vertex>() as u32,
+                        rate: VertexInputRate::Vertex,
+                    }],
 
-            let subpass = Subpass {
-                index: 0,
-                main_pass: &rtt_render_pass,
+                    attributes: &[
+                        AttributeDesc {
+                            location: 0,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 0,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 1,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 16,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 2,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 24,
+                            },
+                        },
+                    ],
+                    input_assembler: InputAssemblerDesc::new(Primitive::TriangleList),
+                    vertex: vs_entry,
+                    tessellation: None,
+                    geometry: None,
+                }
             };
 
             let mut pipeline_desc = GraphicsPipelineDesc::new(
-                shader_entries,
-                Primitive::TriangleList,
-                Rasterizer::FILL,
+                primitive_assembler,
+                Rasterizer {
+                    cull_face: Face::BACK,
+                    ..Rasterizer::FILL
+                },
+                Some(fs_entry),
                 &pipeline_layout,
-                subpass,
+                Subpass {
+                    index: 0,
+                    main_pass: &rtt_render_pass,
+                },
             );
 
             pipeline_desc.blender.targets.push(ColorBlendDesc {
@@ -936,39 +971,6 @@ impl JamBrushSystem {
                 depth_bounds: false,
                 stencil: None,
             };
-
-            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
-                binding: 0,
-                stride: std::mem::size_of::<Vertex>() as u32,
-                rate: VertexInputRate::Vertex,
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 0,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgba32Sfloat,
-                    offset: 0,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 1,
-                binding: 0,
-                element: Element {
-                    format: Format::Rg32Sfloat,
-                    offset: 16,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 2,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgb32Sfloat,
-                    offset: 24,
-                },
-            });
 
             device
                 .create_graphics_pipeline(&pipeline_desc, None)
@@ -988,63 +990,64 @@ impl JamBrushSystem {
                 specialization: Default::default(),
             };
 
-            let shader_entries = GraphicsShaderSet {
-                vertex: vs_entry,
-                hull: None,
-                domain: None,
-                geometry: None,
-                fragment: Some(fs_entry),
-            };
+            let primitive_assembler = {
+                PrimitiveAssemblerDesc::Vertex {
+                    buffers: &[VertexBufferDesc {
+                        binding: 0,
+                        stride: std::mem::size_of::<Vertex>() as u32,
+                        rate: VertexInputRate::Vertex,
+                    }],
 
-            let subpass = Subpass {
-                index: 0,
-                main_pass: &blit_render_pass,
+                    attributes: &[
+                        AttributeDesc {
+                            location: 0,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 0,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 1,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 16,
+                            },
+                        },
+                        AttributeDesc {
+                            location: 2,
+                            binding: 0,
+                            element: Element {
+                                format: Format::Rgb32Sfloat,
+                                offset: 24,
+                            },
+                        },
+                    ],
+                    input_assembler: InputAssemblerDesc::new(Primitive::TriangleList),
+                    vertex: vs_entry,
+                    tessellation: None,
+                    geometry: None,
+                }
             };
 
             let mut pipeline_desc = GraphicsPipelineDesc::new(
-                shader_entries,
-                Primitive::TriangleList,
-                Rasterizer::FILL,
+                primitive_assembler,
+                Rasterizer {
+                    cull_face: Face::BACK,
+                    ..Rasterizer::FILL
+                },
+                Some(fs_entry),
                 &pipeline_layout,
-                subpass,
+                Subpass {
+                    index: 0,
+                    main_pass: &blit_render_pass,
+                },
             );
 
             pipeline_desc.blender.targets.push(ColorBlendDesc {
                 mask: ColorMask::ALL,
                 blend: Some(BlendState::ALPHA),
-            });
-
-            pipeline_desc.vertex_buffers.push(VertexBufferDesc {
-                binding: 0,
-                stride: std::mem::size_of::<Vertex>() as u32,
-                rate: VertexInputRate::Vertex,
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 0,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgba32Sfloat,
-                    offset: 0,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 1,
-                binding: 0,
-                element: Element {
-                    format: Format::Rg32Sfloat,
-                    offset: 16,
-                },
-            });
-
-            pipeline_desc.attributes.push(AttributeDesc {
-                location: 2,
-                binding: 0,
-                element: Element {
-                    format: Format::Rgb32Sfloat,
-                    offset: 24,
-                },
             });
 
             device
@@ -1317,9 +1320,7 @@ impl JamBrushSystem {
                 dpi_factor,
             },
             GpuResources {
-                #[cfg(not(feature = "opengl"))]
                 _instance,
-
                 surface,
                 surface_color_format,
                 adapter,
@@ -1387,7 +1388,7 @@ impl JamBrushSystem {
         );
 
         let mut atlas_image =
-            DynamicImage::new_rgba8(init_info.atlas_size, init_info.atlas_size).to_rgba();
+            DynamicImage::new_rgba8(init_info.atlas_size, init_info.atlas_size).to_rgba8();
         let depth_atlas_image = DepthImage::new(init_info.atlas_size, init_info.atlas_size);
 
         if config.debug_texture_atlas {
@@ -1482,14 +1483,6 @@ impl JamBrushSystem {
         // TODO: Only invalidate if changed
         let gpu = self.gpu.as_mut().unwrap();
         gpu.swapchain_invalidated = true;
-
-        #[cfg(all(feature = "opengl", not(target_arch = "wasm32")))]
-        {
-            let context = gpu.surface.context();
-            context.resize(_resolution.into());
-            gpu.surface_extent.width = _resolution.0;
-            gpu.surface_extent.height = _resolution.1;
-        }
         self.log("Swapchain invalidated: window resized");
     }
 
@@ -1567,7 +1560,7 @@ impl JamBrushSystem {
     pub fn load_sprite(&mut self, image_bytes: &[u8]) -> Sprite {
         let image = image::load_from_memory(&image_bytes).unwrap();
         let transparent = image.color().has_alpha();
-        let image = image.to_rgba();
+        let image = image.to_rgba8();
         let (w, h) = image.dimensions();
 
         self.load_sprite_rgba([w, h], &image, transparent)
@@ -1596,7 +1589,7 @@ impl JamBrushSystem {
     ) -> Sprite {
         let image = image::load_from_memory(&image_bytes).unwrap();
         let transparent = image.color().has_alpha();
-        let image = image.to_rgba();
+        let image = image.to_rgba8();
         let (w, h) = image.dimensions();
 
         let depth_image = image::load_from_memory(&depth_image_bytes).unwrap();
@@ -1636,7 +1629,7 @@ impl JamBrushSystem {
     }
 
     pub fn reload_sprite(&mut self, sprite: &Sprite, image_bytes: &[u8]) {
-        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba();
+        let image = image::load_from_memory(&image_bytes).unwrap().to_rgba8();
         let (w, h) = image.dimensions();
 
         self.reload_sprite_rgba(sprite, [w, h], &image);
@@ -1930,10 +1923,27 @@ impl JamBrushSystem {
             for vertex in vertices {
                 let [x, y, z] = vertex.offset;
                 let [u, v] = vertex.uv;
-                writeln!(&mut buffer, "v {} {} {}", x, y, ((1. - z) * MAX_DEPTH) / 1000.).unwrap();
+                writeln!(
+                    &mut buffer,
+                    "v {} {} {}",
+                    x,
+                    y,
+                    ((1. - z) * MAX_DEPTH) / 1000.
+                )
+                .unwrap();
                 writeln!(&mut buffer, "vt {} {}", u, v).unwrap();
                 let f = i * 3 + 1;
-                writeln!(&mut buffer, "f {}/{} {}/{} {}/{}", f, f, f+1, f+1, f+2, f+2).unwrap();
+                writeln!(
+                    &mut buffer,
+                    "f {}/{} {}/{} {}/{}",
+                    f,
+                    f,
+                    f + 1,
+                    f + 1,
+                    f + 2,
+                    f + 2
+                )
+                .unwrap();
             }
         }
         std::fs::write(&path, buffer).unwrap();
@@ -2557,7 +2567,10 @@ impl<'a> Renderer<'a> {
 
                 // TODO: Don't even have an intermediary matrix
                 let z = 1. - (*depth / MAX_DEPTH);
-                let top_z = sprite.top_z_hack.map(|depth| 1. - (depth / MAX_DEPTH)).unwrap_or(z);
+                let top_z = sprite
+                    .top_z_hack
+                    .map(|depth| 1. - (depth / MAX_DEPTH))
+                    .unwrap_or(z);
 
                 for &([x, y], [u, v]) in BASE_VERTICES {
                     let [ou, ov] = sprite.uv_origin;
@@ -2671,13 +2684,6 @@ impl<'a> Renderer<'a> {
                     command_buffer.draw(trans_start_index..end_index, 0..1);
                 }
 
-                // Dumb hack to switch depth write back on so it gets cleared
-                // TODO: Should be fixed in later gfx_backend_gl versions
-                #[cfg(feature = "opengl")]
-                {
-                    command_buffer.bind_graphics_pipeline(&gpu.rtt_opaque_pipeline);
-                }
-
                 command_buffer.finish();
                 command_buffer
             };
@@ -2697,7 +2703,7 @@ impl<'a> Renderer<'a> {
             gpu.queue_group.queues[0].submit(scene_submission, None);
             gpu.queue_group.queues[0].submit(blit_submission, None);
 
-            let result = gpu.queue_group.queues[0].present_surface(
+            let result = gpu.queue_group.queues[0].present(
                 &mut gpu.surface,
                 ManuallyDrop::take(&mut self.surface_image),
                 Some(&gpu.present_semaphore),
