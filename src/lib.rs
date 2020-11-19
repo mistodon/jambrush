@@ -28,6 +28,9 @@ const BACKEND: &str = "gl";
 #[cfg(feature = "dx11")]
 const BACKEND: &str = "dx11";
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
 mod gfxutils;
 
 use std::{
@@ -457,6 +460,7 @@ impl JamBrushSystem {
 
         #[cfg(feature = "opengl")]
         let (window, inner_size, dpi_factor, adapter, surface) = {
+            #[cfg(not(target_arch = "wasm32"))]
             let (window, surface) = {
                 let builder = backend::config_context(
                     backend::glutin::ContextBuilder::new(),
@@ -476,6 +480,20 @@ impl JamBrushSystem {
 
                 let surface = backend::Surface::from_context(context);
 
+                (window, surface)
+            };
+
+            #[cfg(target_arch = "wasm32")]
+            let (window, surface) = {
+                let window = window_builder.build(&event_loop).unwrap();
+                web_sys::window()
+                    .unwrap()
+                    .document()
+                    .unwrap()
+                    .body()
+                    .unwrap()
+                    .append_child(&winit::platform::web::WindowExtWebSys::canvas(&window));
+                let surface = back::Surface::from_raw_handle(&window);
                 (window, surface)
             };
 
@@ -1465,7 +1483,7 @@ impl JamBrushSystem {
         let gpu = self.gpu.as_mut().unwrap();
         gpu.swapchain_invalidated = true;
 
-        #[cfg(feature = "opengl")]
+        #[cfg(all(feature = "opengl", not(target_arch = "wasm32")))]
         {
             let context = gpu.surface.context();
             context.resize(_resolution.into());
